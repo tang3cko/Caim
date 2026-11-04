@@ -1,5 +1,5 @@
-use super::events::{monotonic, Event, Interest, Token, TERMINATION};
-use super::process::{cstring, RunPlan};
+use super::events::{Event, Interest, TERMINATION, Token, monotonic};
+use super::process::{RunPlan, cstring};
 use crate::error::{Error, Result};
 use std::cell::RefCell;
 use std::collections::HashMap;

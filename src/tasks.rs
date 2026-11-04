@@ -1,5 +1,5 @@
 use crate::concurrency::{self, Concurrency, Holder, Outcome};
-use crate::error::{not_started, Error, Result, BUSY, CANNOT_EXECUTE, CONFIG, FAILED, NOT_FOUND, OK, STALLED, USAGE};
+use crate::error::{BUSY, CANNOT_EXECUTE, CONFIG, Error, FAILED, NOT_FOUND, OK, Result, STALLED, USAGE, not_started};
 use crate::native::{self, Ended, Report, RunPlan, StopStep, WatchPlan};
 use crate::{digests, waits};
 use regex::Regex;
@@ -777,7 +777,7 @@ impl<'a> Runner<'a> {
 
     fn set_held(&self) {
         // The runner is single-threaded; what it starts inherits this environment.
-        std::env::set_var(concurrency::HELD, self.held.join("\n"));
+        unsafe { std::env::set_var(concurrency::HELD, self.held.join("\n")) };
     }
 
     fn directory(&self, task: &Task) -> PathBuf {

@@ -2,7 +2,7 @@ use crate::error::{Error, Result, STALLED};
 
 // As grep(1) exits 1 when nothing matched.
 const PROCESS_GONE: i32 = 1;
-use crate::native::{self, monotonic, Interest, Queue, RunPlan, StopStep, WatchPlan};
+use crate::native::{self, Interest, Queue, RunPlan, StopStep, WatchPlan, monotonic};
 use regex::bytes::Regex;
 use std::collections::BTreeSet;
 use std::fs::File;

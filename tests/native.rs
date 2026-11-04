@@ -1,5 +1,5 @@
 mod common;
-use caim::native::{judging_elsewhere, PosixFiles, Queue, Sources};
+use caim::native::{PosixFiles, Queue, Sources, judging_elsewhere};
 use common::*;
 use std::collections::BTreeSet;
 use std::fs;

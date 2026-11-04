@@ -1,6 +1,6 @@
 use super::events::monotonic;
 use super::os::{self, Queue};
-use super::watch::{stall_message, watch_with, Registration, Stream, WatchPlan, Watched};
+use super::watch::{Registration, Stream, WatchPlan, Watched, stall_message, watch_with};
 use crate::error::{Error, Result};
 use crate::progress::Written;
 use std::collections::BTreeSet;

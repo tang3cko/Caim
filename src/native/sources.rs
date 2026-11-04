@@ -1,7 +1,7 @@
 use super::events::{Event, Interest, Token};
 use super::os::{Queue, Watch};
 use super::watch::READ_BUDGET;
-use crate::error::{missing, Error, Result};
+use crate::error::{Error, Result, missing};
 use crate::progress::{
     Appended, DeclarationKind, Declarations, DirectoryEntries, FileState, FileSystem, Kind, LogFollower,
 };

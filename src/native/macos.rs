@@ -1,5 +1,5 @@
-use super::events::{ignore, monotonic, Event, Interest, Token, TERMINATION};
-use super::process::{cstring, RunPlan};
+use super::events::{Event, Interest, TERMINATION, Token, ignore, monotonic};
+use super::process::{RunPlan, cstring};
 use crate::error::{Error, Result};
 use std::ffi::CString;
 use std::io;
@@ -293,7 +293,7 @@ pub fn start(plan: &RunPlan, output: Option<RawFd>, environment: &[CString]) -> 
     }
 }
 
-extern "C" {
+unsafe extern "C" {
     fn posix_spawn_file_actions_addchdir_np(
         actions: *mut libc::posix_spawn_file_actions_t,
         path: *const libc::c_char,

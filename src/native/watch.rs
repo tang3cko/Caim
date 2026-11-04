@@ -1,4 +1,4 @@
-use super::events::{monotonic, Event, Interest};
+use super::events::{Event, Interest, monotonic};
 use super::os::Queue;
 use super::process::Job;
 use super::sources::{PosixFiles, Sources};

@@ -1,4 +1,4 @@
-use crate::error::{Error, Result, OK};
+use crate::error::{Error, OK, Result};
 
 const STALE: i32 = 1;
 use std::collections::HashMap;
@@ -23,7 +23,7 @@ mod commoncrypto {
         wbuf: [u32; 16],
     }
 
-    extern "C" {
+    unsafe extern "C" {
         fn CC_SHA256_Init(context: *mut Context) -> i32;
         fn CC_SHA256_Update(context: *mut Context, data: *const u8, length: u32) -> i32;
         fn CC_SHA256_Final(digest: *mut u8, context: *mut Context) -> i32;
