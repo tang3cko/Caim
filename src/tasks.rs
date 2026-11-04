@@ -1,5 +1,5 @@
 use crate::concurrency::{self, Concurrency, Holder, Outcome};
-use crate::error::{Error, Result, BLOCKED, PASS, SETUP, USAGE, VOID};
+use crate::error::{not_started, Error, Result, BUSY, CANNOT_EXECUTE, CONFIG, FAILED, NOT_FOUND, OK, STALLED, USAGE};
 use crate::native::{self, Ended, Report, RunPlan, StopStep, WatchPlan};
 use crate::{digests, waits};
 use regex::Regex;
@@ -427,11 +427,11 @@ fn list(tasks: &BTreeMap<String, Task>, json: bool) -> i32 {
         match serde_json::to_string_pretty(&shown) {
             Ok(text) => println!("{text}"),
             Err(error) => {
-                eprintln!("SETUP: cannot write the task list: {error}");
-                return SETUP;
+                eprintln!("caim: cannot write the task list: {error}");
+                return FAILED;
             }
         }
-        return PASS;
+        return OK;
     }
     let mut groups: BTreeMap<Option<&str>, Vec<&Task>> = BTreeMap::new();
     for task in shown {
@@ -447,7 +447,7 @@ fn list(tasks: &BTreeMap<String, Task>, json: bool) -> i32 {
             println!("  {:<22} {description}{human}", task.name);
         }
     }
-    PASS
+    OK
 }
 
 fn general_usage() -> &'static str {
@@ -506,8 +506,8 @@ pub fn main(args: &[String]) -> i32 {
     let (root, project, hooks, tasks) = match found {
         Ok(found) => found,
         Err(error) => {
-            eprintln!("SETUP: {error}");
-            return SETUP;
+            eprintln!("caim: {error}");
+            return CONFIG;
         }
     };
     match args.first().map(String::as_str) {
@@ -538,7 +538,7 @@ pub fn main(args: &[String]) -> i32 {
             if named.help {
                 let texts: Vec<String> = named.tasks.iter().map(|(task, _)| usage(task)).collect();
                 print!("{}", texts.join("\n"));
-                return PASS;
+                return OK;
             }
             let mut runs = Vec::new();
             for (task, options) in &named.tasks {
@@ -556,24 +556,12 @@ pub fn main(args: &[String]) -> i32 {
                     continue;
                 }
                 let status = runner.run(task, &values);
-                if status != PASS {
+                if status != OK {
                     return status;
                 }
             }
-            PASS
+            OK
         }
-    }
-}
-
-pub fn verdict(status: i32) -> &'static str {
-    match status {
-        PASS => "PASS",
-        SETUP => "SETUP",
-        VOID => "VOID",
-        BLOCKED => "BLOCKED",
-        // A task that judges its own arguments (one of two forms, say) says so with 64.
-        USAGE => "USAGE",
-        _ => "FAIL",
     }
 }
 
@@ -693,12 +681,12 @@ impl Out {
         }
     }
 
-    fn verdict(&self, task: &str, status: i32, reason: &Reason, changed_by: Option<&str>) {
+    fn ended(&self, task: &str, status: i32, reason: &Reason, changed_by: Option<&str>) {
         if !self.json {
-            self.write(format!("[{task}] VERDICT {} exit={status}{}\n", verdict(status), reason.note()).as_bytes());
+            self.write(format!("[{task}] exit={status}{}\n", reason.note()).as_bytes());
             return;
         }
-        let mut event = json!({"event": "verdict", "task": task, "verdict": verdict(status), "exit": status, "reason": reason.code()});
+        let mut event = json!({"event": "exit", "task": task, "exit": status, "reason": reason.code()});
         match (reason, changed_by) {
             (Reason::Required(required), _) => event["required"] = json!(required),
             (Reason::Lock(hook), _) => event["hook"] = json!(hook),
@@ -813,13 +801,14 @@ impl<'a> Runner<'a> {
                     out.hook(task, hook, line);
                 }
                 output.status.code().unwrap_or_else(|| {
-                    out.message(task, &format!("VOID: the {hook} hook was killed by a signal"));
-                    VOID
+                    let signal = std::os::unix::process::ExitStatusExt::signal(&output.status).unwrap_or(0);
+                    out.message(task, &format!("the {hook} hook was killed by signal {signal}"));
+                    128 + signal
                 })
             }
             Err(error) => {
-                out.message(task, &format!("VOID: the {hook} hook could not run: {error}"));
-                VOID
+                out.message(task, &format!("the {hook} hook could not run: {error}"));
+                error.raw_os_error().map_or(FAILED, not_started)
             }
         }
     }
@@ -833,8 +822,8 @@ impl<'a> Runner<'a> {
             let other = &self.tasks[required];
             let defaults = parse_args(other, &[]).unwrap_or_default();
             let status = self.run(other, &defaults);
-            if status != PASS {
-                self.out.borrow().verdict(name, status, &Reason::Required(required.clone()), None);
+            if status != OK {
+                self.out.borrow().ended(name, status, &Reason::Required(required.clone()), None);
                 return status;
             }
         }
@@ -854,26 +843,22 @@ impl<'a> Runner<'a> {
                 let out = self.out.borrow();
                 out.message(
                     name,
-                    &format!(
-                        "BLOCKED: {name} did not start; {} is held by {}",
-                        group.group,
-                        concurrency::describe(&holders)
-                    ),
+                    &format!("{name} did not start; {} is held by {}", group.group, concurrency::describe(&holders)),
                 );
-                out.verdict(name, BLOCKED, &Reason::Busy(group, holders), None);
-                return BLOCKED;
+                out.ended(name, BUSY, &Reason::Busy(group, holders), None);
+                return BUSY;
             }
-            Err(Error::Interrupted(_)) => {
+            Err(Error::Interrupted(signal)) => {
                 let out = self.out.borrow();
-                out.message(name, &format!("VOID: {name} was interrupted while it waited for its concurrency groups."));
-                out.verdict(name, VOID, &Reason::Interrupted, None);
-                return VOID;
+                out.message(name, &format!("{name} was interrupted while it waited for its concurrency groups"));
+                out.ended(name, 128 + signal, &Reason::Interrupted, None);
+                return 128 + signal;
             }
             Err(error) => {
                 let out = self.out.borrow();
-                out.message(name, &format!("VOID: {name} did not start; {error}"));
-                out.verdict(name, VOID, &Reason::NotStarted, None);
-                return VOID;
+                out.message(name, &format!("{name} did not start; {error}"));
+                out.ended(name, FAILED, &Reason::NotStarted, None);
+                return FAILED;
             }
         };
         let before = self.held.len();
@@ -890,35 +875,40 @@ impl<'a> Runner<'a> {
         let name = &task.name;
         if let Some(lock) = &task.declaration.lock {
             let status = self.call_hook(name, lock, self.hook(lock).env("TASK_NAME", name).envs(arguments(values)));
-            if status != PASS {
-                self.out.borrow().verdict(name, status, &Reason::Lock(lock.clone()), None);
+            if status != OK {
+                self.out.borrow().ended(name, status, &Reason::Lock(lock.clone()), None);
                 return status;
             }
         }
 
         let missing = match (missing_program(task), &task.declaration.dir) {
-            (Some(program), _) => Some(format!("{program} is missing or not executable")),
-            (None, Some(dir)) if !self.directory(task).is_dir() => Some(format!("its dir {dir} is not a directory")),
+            (Some(program), _) if Path::new(&task.command[0]).exists() => {
+                Some((CANNOT_EXECUTE, format!("{program} is not executable")))
+            }
+            (Some(program), _) => Some((NOT_FOUND, format!("{program} does not exist"))),
+            (None, Some(dir)) if !self.directory(task).is_dir() => {
+                Some((CONFIG, format!("its dir {dir} is not a directory")))
+            }
             _ => None,
         };
-        if let Some(missing) = missing {
+        if let Some((status, missing)) = missing {
             let out = self.out.borrow();
-            out.message(name, &format!("SETUP: {name} did not start; {missing}"));
-            out.verdict(name, SETUP, &Reason::NotStarted, None);
-            return SETUP;
+            out.message(name, &format!("{name} did not start; {missing}"));
+            out.ended(name, status, &Reason::NotStarted, None);
+            return status;
         }
         let channel = match Channel::new() {
             Ok(channel) => channel,
             Err(error) => {
                 let out = self.out.borrow();
-                out.message(name, &format!("VOID: {name} did not start; {error}"));
-                out.verdict(name, VOID, &Reason::NotStarted, None);
-                return VOID;
+                out.message(name, &format!("{name} did not start; {error}"));
+                out.ended(name, FAILED, &Reason::NotStarted, None);
+                return FAILED;
             }
         };
         let (status, reason) = self.supervised(task, values, &channel);
         let (status, changed_by) = self.after(task, values, &channel, status);
-        self.out.borrow().verdict(name, status, &reason, changed_by.as_deref());
+        self.out.borrow().ended(name, status, &reason, changed_by.as_deref());
         status
     }
 
@@ -930,8 +920,8 @@ impl<'a> Runner<'a> {
             (None, Ok(text)) => match text.parse::<f64>() {
                 Ok(seconds) if seconds.is_finite() && seconds > 0.0 => seconds,
                 _ => {
-                    say(&format!("VOID: {name} did not start; GUARD_STALL_SECONDS={text:?} is not a positive number"));
-                    return (VOID, Reason::NotStarted);
+                    say(&format!("{name} did not start; GUARD_STALL_SECONDS={text:?} is not a positive number"));
+                    return (CONFIG, Reason::NotStarted);
                 }
             },
             (None, Err(_)) => crate::progress::STALL_SECONDS,
@@ -988,7 +978,11 @@ impl<'a> Runner<'a> {
                         out.event(json!({"event": "start", "task": name, "pid": pid}));
                     }
                 },
-                stalled: &mut |pid| stall = native::stall_message(pid, idle),
+                stalled: &mut |pid| {
+                    stall = format!(
+                        "{name} (pid {pid}) made no progress for {idle} s: no new kind of line in its output or declared logs and no new entry in its declared directories"
+                    )
+                },
                 unavailable: &mut |error| broken = error.to_string(),
                 stops: &mut stops,
                 output: &mut |bytes| self.out.borrow_mut().output(name, bytes),
@@ -1007,27 +1001,25 @@ impl<'a> Runner<'a> {
             Ok(Ended::Stall(_)) => {
                 say(&stall);
                 show_stops(&stops);
-                say(&format!(
-                    "VOID: {name} stopped making progress and its hang guard ended it. The run is void, not a failure."
-                ));
-                (VOID, Reason::Stalled)
+                (STALLED, Reason::Stalled)
             }
-            Ok(Ended::Interrupted(..)) => {
+            Ok(Ended::Interrupted(signal, _)) => {
                 show_stops(&stops);
-                say(&format!("VOID: {name} was interrupted."));
-                (VOID, Reason::Interrupted)
+                say(&format!("{name} was interrupted by signal {signal}"));
+                (128 + signal, Reason::Interrupted)
             }
             Ok(Ended::Unavailable(message, _)) => {
                 show_stops(&stops);
-                say(&format!("VOID: {name}'s hang guard could not watch the command ({message}); it was stopped."));
-                (VOID, Reason::Unavailable)
+                say(&format!("{name} was stopped: its progress could not be watched ({message})"));
+                (FAILED, Reason::Unavailable)
             }
             Err(error) => {
-                say(&format!(
-                    "VOID: {name} did not start: {}{error}",
-                    if broken.is_empty() { "" } else { "watch broke: " }
-                ));
-                (VOID, Reason::NotStarted)
+                say(&format!("{name} did not start: {}{error}", if broken.is_empty() { "" } else { "watch broke: " }));
+                let status = match error {
+                    Error::Start(errno, _) => not_started(errno),
+                    _ => FAILED,
+                };
+                (status, Reason::NotStarted)
             }
         }
     }
@@ -1076,7 +1068,7 @@ impl<'a> Runner<'a> {
                     .env("TASK_STATUS", status.to_string())
                     .env("TASK_STARTED", channel.path("started")),
             );
-            if code != PASS {
+            if code != OK {
                 status = code;
                 changed_by = Some(hook.clone());
             }

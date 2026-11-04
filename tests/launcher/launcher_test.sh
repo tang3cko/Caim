@@ -27,12 +27,12 @@ chmod +x "$PROJECT/scripts/hello"
 
 CASE=build
 status 0 "$HOME_DIR/caim" --build
-contains "PASS: caim is current"
+contains "caim is current"
 status 0 "$HOME_DIR/caim" --check
 pass
 
 CASE=no-project
-status 2 env -u CAIM_ROOT -C "$WORK" "$HOME_DIR/caim" list
+status 78 env -u CAIM_ROOT -C "$WORK" "$HOME_DIR/caim" list
 contains "no caim.toml in the current directory or above it"
 pass
 
@@ -46,7 +46,7 @@ status 0 "$COPY/caim" --check
 cp -p "$COPY/src/lib.rs" "$WORK/lib.rs"
 printf '\n// changed\n' >> "$COPY/src/lib.rs"
 touch -r "$WORK/lib.rs" "$COPY/src/lib.rs"   # the same mtime: only the content says it changed
-status 3 "$COPY/caim" --check
+status 1 "$COPY/caim" --check
 contains "missing or stale"
 cp -p "$WORK/lib.rs" "$COPY/src/lib.rs"
 status 0 "$COPY/caim" --check
@@ -54,14 +54,14 @@ pass
 
 CASE=new-source-file
 : > "$COPY/src/extra.rs"   # a file the build would see changes the fingerprint even when it is empty
-status 3 "$COPY/caim" --check
+status 1 "$COPY/caim" --check
 rm "$COPY/src/extra.rs"
 status 0 "$COPY/caim" --check
 pass
 
 CASE=missing-binary
 rm "$COPY/target/release/caim"
-status 3 "$COPY/caim" --check
+status 1 "$COPY/caim" --check
 pass
 
 CASE=list
@@ -73,7 +73,7 @@ pass
 CASE=run
 status 0 env -u CAIM_ROOT -C "$PROJECT/deep/er" "$HOME_DIR/caim" hello
 contains "hello from hello in $PROJECT"
-contains "[hello] VERDICT PASS exit=0"
+contains "[hello] exit=0"
 [[ "$(ls "$PROJECT")" == "$(printf 'caim.toml\ndeep\nscripts')" ]] || fail "caim wrote into the project: $(ls "$PROJECT")"
 pass
 

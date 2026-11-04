@@ -1,6 +1,6 @@
 # Caim
 
-A task runner and process supervisor for a project's tasks. Caim judges whether a running task is making progress only by its output and the signs it declared (lines appended to a log, directories it watches), and the moment those stop, it stops the run and reports it VOID. Elapsed time never decides a verdict. Caim keeps nothing itself: a task's output and verdict go to stdout, and where a task puts what it makes is up to the task.
+A task runner and process supervisor for a project's tasks. Caim judges whether a running task is making progress only by its output and the signs it declared (lines appended to a log, directories it watches), and the moment those stop, it stops the run and exits 124, as timeout(1) does. Elapsed time alone never ends a run. Caim keeps nothing itself: a task's output and exit go to stdout, and where a task puts what it makes is up to the task.
 
 ## Platforms
 
@@ -10,7 +10,7 @@ macOS (kqueue and libproc) and Linux 5.3 or later (epoll, pidfd, inotify, signal
 
 Put `caim` on your PATH. A project is the directory holding a `caim.toml`, which names it. `caim` looks for the `caim.toml` in the current directory and then in each one above it, and runs every task at the project's root unless the task names a `dir`; `CAIM_ROOT` names the project instead.
 
-Every task is declared in `caim.toml`; `run` is the only key a task needs. A `run` string goes through `sh -c`; a list is the command and its arguments, with no shell. A command with a `/` in it, such as a script of the project's, is a path from the project's root. A task's must be executable when the task runs, after what it requires, so a task can run what another one builds; one that is not ends the run as SETUP. A hook's must be executable when caim starts.
+Every task is declared in `caim.toml`; `run` is the only key a task needs. A `run` string goes through `sh -c`; a list is the command and its arguments, with no shell. A command with a `/` in it, such as a script of the project's, is a path from the project's root. A task's must be executable when the task runs, after what it requires, so a task can run what another one builds; one that is not ends the run with 126, or 127 when it does not exist. A hook's must be executable when caim starts.
 
 ```toml
 name = "hello-world"
@@ -43,10 +43,10 @@ run = ["scripts/editor-closed"]
 - `caim list [--json]`, `caim <task> --help`, `caim [--json] <task> [--name value ...] [<task> [--name value ...] ...]`. Options belong to the task before them. Every task's arguments are checked against its declaration before anything runs; a mismatch exits 64 with nothing started. The command sees them as `TASK_ARG_<NAME>`.
 - Several tasks run in the order given, as make runs several targets: the first that does not pass ends the line, and caim exits with its status. A task runs at most once per line, whether it was named or required.
 - `group` only says where `list` shows a task; tasks without one come first.
-- A guarded task (the default; `guard = false` gives the command the terminal, its foreground included when caim has it, and no stall guard) is stopped as VOID once it has made no progress for `idle` seconds: the task's own `idle`, else `GUARD_STALL_SECONDS` from the environment, else 180. A stalled or interrupted run is stopped by `stop`, steps of `"SIGNAL:SECONDS"` (INT, TERM, HUP, QUIT or KILL, and how long its processes have to leave before the next step); `["TERM:20", "KILL:20"]` when not given.
+- A guarded task (the default; `guard = false` gives the command the terminal, its foreground included when caim has it, and no stall guard) is stopped, exiting 124, once it has made no progress for `idle` seconds: the task's own `idle`, else `GUARD_STALL_SECONDS` from the environment, else 180. A stalled or interrupted run is stopped by `stop`, steps of `"SIGNAL:SECONDS"` (INT, TERM, HUP, QUIT or KILL, and how long its processes have to leave before the next step); `["TERM:20", "KILL:20"]` when not given.
 - `env`, a table, is set for the task's command alone: not for what it requires, nor for the tasks after it. It cannot set `TASK_`, `GUARD_` or `CAIM_` names, which are caim's. `dir` is the directory inside the project the command runs in, the project's root when not given; hooks always run at the root.
-- A run's stdout is the task's stdout and stderr, then one line, `[<task>] VERDICT PASS|FAIL|VOID|BLOCKED|SETUP|USAGE exit=N`, with the reason in parentheses when the command did not simply exit. Caim's own account of a stall or a stop goes to stderr. caim exits with the status of the line's last task run (see [Verdicts and exit statuses](#verdicts-and-exit-statuses)).
-- With `--json`, stdout is one JSON object per line: `start` (`pid`), `output` (`line`), `hook` (`hook`, `line`), `message` (`text`), `waiting` and, last for each task run, `verdict` (`verdict`, `exit`, `reason`: `exited`, `stalled`, `interrupted`, `unavailable`, `not-started`, `required`, `lock` or `busy`). Every event names its `task`.
+- A run's stdout is the task's stdout and stderr, then one line, `[<task>] exit=N`, with the reason in parentheses when the command did not simply exit. Caim's own account of a stall or a stop goes to stderr. caim exits with the status of the line's last task run (see [Exit statuses](#exit-statuses)).
+- With `--json`, stdout is one JSON object per line: `start` (`pid`), `output` (`line`), `hook` (`hook`, `line`), `message` (`text`), `waiting` and, last for each task run, `exit` (`exit`, `reason`: `exited`, `stalled`, `interrupted`, `unavailable`, `not-started`, `required`, `lock` or `busy`). Every event names its `task`.
 - A task's `watch.logs` and `watch.dirs` are paths relative to the project. A task can also declare one while it runs by appending `log /absolute/path` or `dir /absolute/path` to the file `GUARD_DECLARED` names.
 - A hook, declared under `[hooks.<name>]` with its own `run`, can hold a run back (a task's `lock`) or change its status (`after`). A lock hook that exits non-zero ends the run with its status before the command starts; an after hook sees `TASK_STATUS` and exits 0 to leave it, or with the status the run should end with.
 - A task can declare the concurrency groups it holds while it runs (see below).
@@ -100,22 +100,26 @@ It completes `list`, task names, a task's `--arguments` and their `choices`, fro
 
 caim itself reads `CAIM_ROOT`, `CAIM_LOCK_DIR`, `GUARD_STALL_SECONDS`, `XDG_CACHE_HOME` and `TMPDIR`.
 
-### Verdicts and exit statuses
+### Exit statuses
 
-| Verdict | Exit status | Meaning |
-|---|---|---|
-| PASS | 0 | the command exited 0 |
-| FAIL | any other | the command exited with that status |
-| SETUP | 2 | the project or the run could not be set up (caim.toml, a missing program or dir) |
-| VOID | 3 | the run says nothing about the task: it stalled, was interrupted (TERM, INT, HUP or QUIT to caim), or its watch broke |
-| BLOCKED | 4 | a concurrency group with `on_busy = "refuse"` was held |
-| USAGE | 64 | the arguments did not match the declaration, or the task judged its own and exited 64 |
+A task that ran exits with its command's status, 128 plus the signal when a signal ended it. caim's own statuses follow timeout(1), the shell and sysexits(3), clear of the 1 and 2 most commands use:
 
-A command that exits 2, 3, 4 or 64 itself is shown under that verdict. The waiting modes have statuses of their own: `run` exits 0 whenever the command exited, whatever its status, and writes how it ended (`exit N`, `stall status=N`, `interrupted SIG status=N`, `unavailable status=N`) to its `--outcome` file; it exits 3 on a stall, 128 plus the signal when interrupted, and 1 when its watch broke.
+| Status | When |
+|---|---|
+| 64 | the arguments did not match the declaration |
+| 75 | a concurrency group with `on_busy = "refuse"` was held |
+| 78 | caim.toml, a task's dir or GUARD_STALL_SECONDS is invalid |
+| 124 | the run stalled and was stopped |
+| 125 | caim itself failed, such as a watch that broke |
+| 126 | the command could not be executed |
+| 127 | the command was not found |
+| 128+N | caim was interrupted by signal N (TERM, INT, HUP or QUIT) and stopped the run |
+
+A required task or a lock hook that does not pass ends the run with its status; an after hook may change it. The waiting modes have statuses of their own: `run` exits 0 whenever the command exited, whatever its status, and writes how it ended (`exit N`, `stall status=N`, `interrupted SIG status=N`, `unavailable status=N`) to its `--outcome` file; it exits 3 on a stall, 128 plus the signal when interrupted, and 1 when its watch broke.
 
 ### How caim differs
 
-caim never ends a run on elapsed time: a run ends when its command exits, when it is interrupted, or when its declared progress stops for the idle time, and a stopped run is VOID rather than FAIL, so a hang is never read as a broken build. Its concurrency groups cover every checkout of a project, take shared holders with a limit, and can refuse at once (BLOCKED) instead of waiting.
+caim never ends a run on elapsed time: a run ends when its command exits, when it is interrupted, or when its declared progress stops for the idle time, and a stalled run exits 124 rather than its command's status, so a hang is never read as a broken build. Its concurrency groups cover every checkout of a project, take shared holders with a limit, and can refuse at once (exit 75) instead of waiting.
 
 ### Concurrency
 
@@ -129,10 +133,10 @@ group = "binaries"
 mode = "shared"                   # "exclusive" (the default) or "shared": shared holders run together, never with an exclusive one
 limit = 4                         # shared holders at once (shared only; no limit without it)
 scope = "project"                 # "project" (the default), "checkout" or "machine"
-on_busy = "refuse"                # "wait" (the default) or "refuse": end BLOCKED (exit 4) at once, naming the holders
+on_busy = "refuse"                # "wait" (the default) or "refuse": end at once with exit 75, naming the holders
 ```
 
-`concurrency` may also be a list of groups; every run takes them in one order, so two runs never hold what the other waits for. The scope decides who shares a name: `project` is every checkout whose `caim.toml` gives the same name (a git worktree or another clone of the project included), `checkout` is one directory, `machine` is every project of this user. A waiting run says who holds the group (task, pid, checkout, since when) and waits for a release, never for a time; with `--json` that is a `waiting` event, and a refused run's `verdict` carries `concurrency` and `holders`. A run passes its groups on to the tasks it requires and to a caim its command starts (`CAIM_HELD`), so neither waits on it.
+`concurrency` may also be a list of groups; every run takes them in one order, so two runs never hold what the other waits for. The scope decides who shares a name: `project` is every checkout whose `caim.toml` gives the same name (a git worktree or another clone of the project included), `checkout` is one directory, `machine` is every project of this user. A waiting run says who holds the group (task, pid, checkout, since when) and waits for a release, never for a time; with `--json` that is a `waiting` event, and a refused run's `exit` event carries `concurrency` and `holders`. A run passes its groups on to the tasks it requires and to a caim its command starts (`CAIM_HELD`), so neither waits on it.
 
 The locks are flock(2)ed files under `~/Library/Caches/caim/locks` (`$XDG_CACHE_HOME/caim/locks` elsewhere, or `CAIM_LOCK_DIR`), never in the project. The kernel frees them when a holder dies, and nothing a command leaves running inherits them. A group only sees runs that go through caim; a resource used outside it, such as an editor opened by hand, is what a `lock` hook checks. Waiting runs are not served in order, and a steady stream of shared holders can keep an exclusive one waiting.
 

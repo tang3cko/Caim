@@ -35,7 +35,7 @@ send "fg\r"
 await unguarded {fg\r\n[^\r\n]*caim ask} "fg did not resume caim"
 send "yes\r"
 await unguarded {got yes} "the task did not read after fg"
-await unguarded {VERDICT PASS exit=0} "the run did not pass"
+await unguarded {\[ask\] exit=0} "the run did not pass"
 puts "VERDICT PASS unguarded"
 close
 wait
@@ -56,7 +56,7 @@ expect {
 send "fg\r"
 exec sh -c "echo go >> $go"
 await guarded {finished} "the task did not go on after fg"
-await guarded {VERDICT PASS exit=0} "the run did not pass"
+await guarded {\[work\] exit=0} "the run did not pass"
 puts "VERDICT PASS guarded"
 close
 wait

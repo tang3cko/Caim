@@ -1,4 +1,4 @@
-use crate::error::{PASS, USAGE};
+use crate::error::{OK, USAGE};
 use crate::tasks::{self, Task};
 use std::collections::BTreeMap;
 use std::io::Write;
@@ -35,7 +35,7 @@ pub fn dispatch(args: &[String]) -> i32 {
     };
     // A shell that stops reading early is no error of ours.
     let _ = std::io::stdout().write_all(text.as_bytes());
-    PASS
+    OK
 }
 
 pub fn candidates(tasks: &BTreeMap<String, Task>, words: &[String]) -> Vec<String> {

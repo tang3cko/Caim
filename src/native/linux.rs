@@ -443,7 +443,10 @@ pub fn start(plan: &RunPlan, output: Option<RawFd>, environment: &[CString]) -> 
         libc::posix_spawn_file_actions_destroy(&mut files);
         libc::posix_spawnattr_destroy(&mut attributes);
         if error != 0 {
-            return Err(Error::errno(format!("start {}", plan.command[0]), error));
+            return Err(Error::Start(
+                error,
+                format!("start {}: {}", plan.command[0], io::Error::from_raw_os_error(error)),
+            ));
         }
         Ok(pid)
     }

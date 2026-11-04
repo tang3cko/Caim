@@ -1,4 +1,6 @@
-use crate::error::{Error, Result, FAIL, PASS};
+use crate::error::{Error, Result, OK};
+
+const STALE: i32 = 1;
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::{self, Read, Write};
@@ -159,7 +161,7 @@ fn hash_check(lists: &[String]) -> Result<i32> {
             writeln!(output, "{}\t{}", lists[line.list], line.path).map_err(|error| Error::io("stdout", error))?;
         }
     }
-    Ok(if stale { FAIL } else { PASS })
+    Ok(if stale { STALE } else { OK })
 }
 
 fn hash(arguments: &[String]) -> Result<i32> {
@@ -180,12 +182,12 @@ fn hash(arguments: &[String]) -> Result<i32> {
             Ok(digest) => text.push_str(&format!("{digest}  {path}\n")),
             Err(error) => {
                 eprintln!("caim hash: {path}: {error}");
-                return Ok(FAIL);
+                return Ok(STALE);
             }
         }
     }
     io::stdout().lock().write_all(text.as_bytes()).map_err(|error| Error::io("stdout", error))?;
-    Ok(PASS)
+    Ok(OK)
 }
 
 pub fn dispatch(arguments: &[String]) -> Result<i32> {

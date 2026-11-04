@@ -155,7 +155,7 @@ fn bad_usage_is_64_before_anything_runs() {
     ] {
         let (status, output) = run(project.x(&args).env("RUNNER_TEST_MARK", &mark));
         assert_eq!(status, 64, "{args:?}: {output}");
-        assert!(!output.contains("VERDICT"), "{args:?}: {output}");
+        assert!(!output.contains("] exit="), "{args:?}: {output}");
     }
     assert!(!mark.exists(), "a task ran on bad usage");
     project.untouched(&[]);
@@ -194,9 +194,9 @@ fn a_broken_declaration_stops_everything_as_setup() {
         project.task("check", "fine", SIMPLE, "exit 0");
         project.task(group, name, toml, "exit 0");
         let (status, output) = project.run(&["list"]);
-        assert_eq!(status, 2, "{name}: {output}");
+        assert_eq!(status, 78, "{name}: {output}");
         assert!(output.contains(expected), "{name}: {output}");
-        assert_eq!(project.run(&["fine"]).0, 2, "{name}");
+        assert_eq!(project.run(&["fine"]).0, 78, "{name}");
     }
     let project = Project::new();
     project.task("check", "typo", "description = \"t\"\ngaurd = true\n", "exit 0");
@@ -208,14 +208,14 @@ fn a_broken_declaration_stops_everything_as_setup() {
     let (status, output) = project.run(&["list"]);
     assert_eq!(status, 0, "{output}");
     let (status, output) = project.run(&["plain"]);
-    assert_eq!(status, 2, "{output}");
-    assert!(output.contains("SETUP: plain did not start; scripts/plain is missing or not executable"), "{output}");
-    assert_eq!(last_line(&output), "[plain] VERDICT SETUP exit=2 (did not start)", "{output}");
+    assert_eq!(status, 126, "{output}");
+    assert!(output.contains("plain did not start; scripts/plain is not executable"), "{output}");
+    assert_eq!(last_line(&output), "[plain] exit=126 (did not start)", "{output}");
     let project = Project::new();
     project.task("check", "plain", SIMPLE, "exit 0");
     project.written("\n[hooks.gone]\nrun = [\"scripts/gone\"]\n");
     let (status, output) = project.run(&["list"]);
-    assert_eq!(status, 2);
+    assert_eq!(status, 78);
     assert!(output.contains("[hooks.gone]: scripts/gone is missing or not executable"), "{output}");
 }
 
@@ -237,7 +237,7 @@ fn several_tasks_run_in_order_and_stop_at_the_first_that_does_not_pass() {
     let (status, stdout, stderr, order_text) = ran(&["one", "--word", "a", "two", "--word=b"]);
     assert_eq!(status, 0, "{stdout}{stderr}");
     assert_eq!(order_text, "one a\ntwo b\n");
-    assert_eq!(stdout, "[one] VERDICT PASS exit=0\n[two] VERDICT PASS exit=0\n");
+    assert_eq!(stdout, "[one] exit=0\n[two] exit=0\n");
 
     let (status, _, _, order_text) = ran(&["one", "--word", "two"]);
     assert_eq!(status, 0);
@@ -246,7 +246,7 @@ fn several_tasks_run_in_order_and_stop_at_the_first_that_does_not_pass() {
     let (status, stdout, _, order_text) = ran(&["one", "fails", "two"]);
     assert_eq!(status, 5);
     assert_eq!(order_text, "one none\nfails\n", "nothing after the first failure runs");
-    assert_eq!(last_line(&stdout), "[fails] VERDICT FAIL exit=5");
+    assert_eq!(last_line(&stdout), "[fails] exit=5");
 
     let (status, _, stderr, order_text) = ran(&["one", "two", "--bogus", "x"]);
     assert_eq!(status, 64, "{stderr}");
@@ -260,7 +260,7 @@ fn several_tasks_run_in_order_and_stop_at_the_first_that_does_not_pass() {
     let (status, stdout, _, _) = ran(&["--json", "one", "two"]);
     assert_eq!(status, 0);
     let verdicts: Vec<String> =
-        of(&events(&stdout), "verdict").iter().map(|event| event["task"].as_str().unwrap().to_string()).collect();
+        of(&events(&stdout), "exit").iter().map(|event| event["task"].as_str().unwrap().to_string()).collect();
     assert_eq!(verdicts, vec!["one", "two"]);
 
     let (status, stdout, _, order_text) = ran(&["one", "two", "--help"]);
@@ -289,13 +289,13 @@ fn a_task_written_in_caim_toml_runs_like_any_other() {
     let (status, stdout, stderr) = split(&mut project.x(&["greet", "--who", "you"]));
     assert_eq!(status, 0, "{stdout}{stderr}");
     let root = project.dir.0.display().to_string().to_uppercase();
-    assert_eq!(stdout, format!("HELLO YOU FROM {root}\n[greet] VERDICT PASS exit=0\n"));
+    assert_eq!(stdout, format!("HELLO YOU FROM {root}\n[greet] exit=0\n"));
     let (status, stdout, _) = split(&mut project.x(&["literal"]));
     assert_eq!(status, 0);
     assert_eq!(stdout.lines().next(), Some("$HOME a  b"));
     let (status, output) = project.run(&["both"]);
     assert_eq!(status, 0, "{output}");
-    assert!(output.contains("[greet] VERDICT PASS"), "{output}");
+    assert!(output.contains("[greet] exit=0"), "{output}");
     assert_eq!(project.run(&["greet", "--bogus", "x"]).0, 64);
 
     let (status, stdout, _) = split(&mut project.x(&["list"]));
@@ -323,7 +323,7 @@ fn a_task_written_in_caim_toml_runs_like_any_other() {
         other.task("check", "scripted", SIMPLE, "echo scripted");
         other.written(tasks);
         let (status, output) = other.run(&["list"]);
-        assert_eq!(status, 2, "{tasks}: {output}");
+        assert_eq!(status, 78, "{tasks}: {output}");
         assert!(output.contains(expected), "{tasks}: {output}");
     }
 }
@@ -343,7 +343,7 @@ fn a_passing_run_streams_its_output_and_ends_in_the_verdict() {
     let (status, stdout, stderr) = split(&mut project.x(&["ok", "--spec", "[tag] name", "--dry-run"]));
     assert_eq!(status, 0, "{stdout}{stderr}");
     let expected = format!(
-        "spec=[tag] name dry=1 cwd={} run=unset\nto stderr\nline 1\nline 2\nline 3\n[ok] VERDICT PASS exit=0\n",
+        "spec=[tag] name dry=1 cwd={} run=unset\nto stderr\nline 1\nline 2\nline 3\n[ok] exit=0\n",
         project.dir.0.display()
     );
     assert_eq!(stdout, expected, "stderr: {stderr}");
@@ -351,16 +351,23 @@ fn a_passing_run_streams_its_output_and_ends_in_the_verdict() {
 }
 
 #[test]
-fn exit_statuses_map_to_verdicts() {
+fn a_tasks_exit_status_is_caims() {
     let project = Project::new();
     project.task("check", "ends", SIMPLE, "echo \"ended $WANT\"; exit $WANT");
-    for (code, verdict) in
-        [(1, "FAIL"), (2, "SETUP"), (3, "VOID"), (4, "BLOCKED"), (5, "FAIL"), (6, "FAIL"), (7, "FAIL"), (64, "USAGE")]
-    {
+    for code in [1, 2, 3, 4, 5, 64, 124, 125, 126, 127] {
         let (status, stdout, stderr) = split(project.x(&["ends"]).env("WANT", code.to_string()));
         assert_eq!(status, code, "{stdout}{stderr}");
-        assert_eq!(last_line(&stdout), format!("[ends] VERDICT {verdict} exit={code}"), "{stdout}");
+        assert_eq!(last_line(&stdout), format!("[ends] exit={code}"), "{stdout}");
     }
+}
+
+#[test]
+fn a_command_that_cannot_start_exits_as_a_shell_says() {
+    let project = Project::new();
+    project.written("\n[tasks.nothing]\nrun = [\"no-such-command-anywhere\"]\n");
+    let (status, output) = project.run(&["nothing"]);
+    assert_eq!(status, 127, "{output}");
+    assert_eq!(last_line(&output), "[nothing] exit=127 (did not start)", "{output}");
 }
 
 #[test]
@@ -372,12 +379,12 @@ fn required_tasks_run_first_and_stop_the_run_when_they_fail() {
     let (status, output) = run(project.x(&["top"]).env("ORDER", &order));
     assert_eq!(status, 0, "{output}");
     assert_eq!(fs::read_to_string(&order).unwrap(), "base\ntop\n");
-    assert!(output.contains("[base] VERDICT PASS"), "{output}");
+    assert!(output.contains("[base] exit=0"), "{output}");
     fs::remove_file(&order).unwrap();
     let (status, output) = run(project.x(&["top"]).env("ORDER", &order).env("BASE_STATUS", "1"));
     assert_eq!(status, 1, "{output}");
     assert_eq!(fs::read_to_string(&order).unwrap(), "base\n");
-    assert_eq!(last_line(&output), "[top] VERDICT FAIL exit=1 (required task base did not pass)", "{output}");
+    assert_eq!(last_line(&output), "[top] exit=1 (required task base did not pass)", "{output}");
 }
 
 #[test]
@@ -389,7 +396,7 @@ fn a_lock_hook_refuses_before_the_run_starts() {
     let (status, stdout, stderr) = split(project.x(&["locked"]).env("MARK", &mark));
     assert_eq!(status, 4, "{stdout}{stderr}");
     assert!(stdout.contains("BLOCKED: locked did not start"), "{stdout}");
-    assert_eq!(last_line(&stdout), "[locked] VERDICT BLOCKED exit=4 (editor-lock hook)", "{stdout}");
+    assert_eq!(last_line(&stdout), "[locked] exit=4 (editor-lock hook)", "{stdout}");
     assert!(!mark.exists());
     project.untouched(&[]);
 }
@@ -407,20 +414,19 @@ fn after_hooks_see_the_status_and_may_change_it() {
     assert!(output.contains("swept swept status=0"), "{output}");
     let (status, output) = run(project.x(&["swept"]).env("SWEEP_STATUS", "5"));
     assert_eq!(status, 5, "{output}");
-    assert_eq!(last_line(&output), "[swept] VERDICT FAIL exit=5", "{output}");
+    assert_eq!(last_line(&output), "[swept] exit=5", "{output}");
     project.untouched(&[]);
 }
 
 #[test]
-fn a_silent_run_is_stopped_as_void() {
+fn a_silent_run_is_stopped_as_stalled() {
     let project = Project::new();
     project.task("check", "silent", SIMPLE, "echo started; exec tail -f /dev/null");
     let (status, stdout, stderr) = split(project.x(&["silent"]).env("GUARD_STALL_SECONDS", "1"));
-    assert_eq!(status, 3, "{stdout}{stderr}");
-    assert!(stderr.contains("no progress for 1 s"), "{stderr}");
+    assert_eq!(status, 124, "{stdout}{stderr}");
+    assert!(stderr.contains("made no progress for 1 s"), "{stderr}");
     assert!(stderr.contains("[stop] TERM to 1 process(es)"), "{stderr}");
-    assert!(stderr.contains("silent stopped making progress"), "{stderr}");
-    assert_eq!(stdout, "started\n[silent] VERDICT VOID exit=3 (stalled)\n");
+    assert_eq!(stdout, "started\n[silent] exit=124 (stalled)\n");
 }
 
 #[test]
@@ -434,10 +440,14 @@ fn an_interrupted_run_is_void() {
         written(&ready);
         unsafe { libc::kill(child.id() as i32, signal) };
         let (status, output) = finish(child);
-        assert_eq!(status, 3, "signal {signal}: {output}");
+        assert_eq!(status, 128 + signal, "signal {signal}: {output}");
         assert!(output.contains("[stop] TERM to 1 process(es)"), "signal {signal}: {output}");
         assert!(output.contains("long was interrupted"), "signal {signal}: {output}");
-        assert_eq!(last_line(&output), "[long] VERDICT VOID exit=3 (interrupted)", "signal {signal}: {output}");
+        assert_eq!(
+            last_line(&output),
+            format!("[long] exit={} (interrupted)", 128 + signal),
+            "signal {signal}: {output}"
+        );
     }
 }
 
@@ -464,18 +474,18 @@ fn a_signal_ignored_at_start_stays_ignored_between_runs() {
     fs::write(&release, "go\n").unwrap();
     let (status, output) = finish(child);
     assert_eq!(status, 0, "{output}");
-    assert_eq!(last_line(&output), "[short] VERDICT PASS exit=0", "{output}");
+    assert_eq!(last_line(&output), "[short] exit=0", "{output}");
 }
 
 #[test]
-fn a_declaration_the_watch_cannot_follow_is_void() {
+fn a_declaration_the_watch_cannot_follow_stops_the_run() {
     let project = Project::new();
     project.task("check", "declares", SIMPLE, "echo \"tree /\" >> \"$GUARD_DECLARED\"; exec tail -f /dev/null");
     let (status, output) = project.run(&["declares"]);
-    assert_eq!(status, 3, "{output}");
-    assert!(output.contains("could not watch the command (unknown watch declaration: tree /)"), "{output}");
+    assert_eq!(status, 125, "{output}");
+    assert!(output.contains("its progress could not be watched (unknown watch declaration: tree /)"), "{output}");
     assert!(!output.contains("no progress for"), "{output}");
-    assert_eq!(last_line(&output), "[declares] VERDICT VOID exit=3 (unavailable)", "{output}");
+    assert_eq!(last_line(&output), "[declares] exit=125 (unavailable)", "{output}");
 }
 
 #[test]
@@ -506,7 +516,7 @@ fn a_leftover_holding_the_output_does_not_hold_the_run() {
     let left: i32 = stdout.lines().next().and_then(|line| line.strip_prefix("left ")).unwrap().parse().unwrap();
     unsafe { libc::kill(left, libc::SIGKILL) };
     assert_eq!(status, 0, "{stdout}{stderr}");
-    assert_eq!(last_line(&stdout), "[forks] VERDICT PASS exit=0", "{stdout}");
+    assert_eq!(last_line(&stdout), "[forks] exit=0", "{stdout}");
 }
 
 #[test]
@@ -550,9 +560,9 @@ fn json_streams_one_event_per_line_and_ends_in_the_verdict() {
     assert_eq!(status, 0, "{stdout}{stderr}");
     let all = events(&stdout);
     let last = all.last().unwrap();
-    assert_eq!(last["event"], "verdict");
+    assert_eq!(last["event"], "exit");
     assert_eq!(last["task"], "top");
-    assert_eq!(last["verdict"], "PASS");
+    assert_eq!(last["task"], "top");
     assert_eq!(last["exit"], 0);
     assert_eq!(last["reason"], "exited");
     let lines: Vec<(&str, &str)> = of(&all, "output")
@@ -563,14 +573,14 @@ fn json_streams_one_event_per_line_and_ends_in_the_verdict() {
     let started: Vec<&str> = of(&all, "start").iter().map(|event| event["task"].as_str().unwrap()).collect();
     assert_eq!(started, vec!["base", "top"]);
     assert!(of(&all, "start").iter().all(|event| event["pid"].as_i64().unwrap() > 0));
-    assert_eq!(of(&all, "verdict").len(), 2);
+    assert_eq!(of(&all, "exit").len(), 2);
 
     project.task("check", "silent", SIMPLE, "exec tail -f /dev/null");
     let (status, stdout, _) = split(project.x(&["silent", "--json"]).env("GUARD_STALL_SECONDS", "1"));
-    assert_eq!(status, 3);
+    assert_eq!(status, 124);
     let all = events(&stdout);
     assert_eq!(all.last().unwrap()["reason"], "stalled");
-    assert_eq!(all.last().unwrap()["verdict"], "VOID");
+    assert_eq!(all.last().unwrap()["exit"], 124);
     assert!(
         of(&all, "message").iter().any(|event| event["text"].as_str().unwrap().contains("[stop] TERM")),
         "{stdout}"
@@ -592,7 +602,7 @@ fn an_unguarded_task_keeps_the_terminal() {
     project.task("dev", "plain", "description = \"t\"\nguard = false\n", "echo \"to the terminal\"");
     let (status, stdout, stderr) = split(&mut project.x(&["plain"]));
     assert_eq!(status, 0, "{stdout}{stderr}");
-    assert_eq!(stdout, "to the terminal\n[plain] VERDICT PASS exit=0\n");
+    assert_eq!(stdout, "to the terminal\n[plain] exit=0\n");
     let (status, stdout, _) = split(&mut project.x(&["plain", "--json"]));
     assert_eq!(status, 0);
     assert_eq!(of(&events(&stdout), "output")[0]["line"], "to the terminal");
@@ -652,14 +662,14 @@ fn a_busy_group_refuses_a_run_that_asks_to_be_refused() {
     let holder = Holder::start(project.x(&["first"]), "first", &scratch.0);
     let mark = scratch.path("ran");
     let (status, stdout, stderr) = split(project.x(&["second"]).env("MARK", &mark));
-    assert_eq!(status, 4, "{stdout}{stderr}");
+    assert_eq!(status, 75, "{stdout}{stderr}");
     let checkout = project.dir.0.display().to_string();
     assert!(stderr.contains("editor is held by first (pid "), "{stderr}");
     assert!(stderr.contains(&format!("in {checkout}")), "{stderr}");
-    assert_eq!(last_line(&stdout), "[second] VERDICT BLOCKED exit=4 (busy: editor)", "{stdout}");
+    assert_eq!(last_line(&stdout), "[second] exit=75 (busy: editor)", "{stdout}");
     assert!(!mark.exists());
     let (status, stdout, _) = split(project.x(&["second", "--json"]).env("MARK", &mark));
-    assert_eq!(status, 4);
+    assert_eq!(status, 75);
     let verdict = events(&stdout).pop().unwrap();
     assert_eq!(verdict["reason"], "busy");
     assert_eq!(verdict["concurrency"]["group"], "editor");
@@ -788,7 +798,7 @@ fn every_checkout_of_a_project_shares_a_group() {
     let holder = Holder::start(main.x(&["first"]), "first", &scratch.0);
 
     let (status, stdout, stderr) = split(&mut linked.x(&["second", "--json"]));
-    assert_eq!(status, 4, "another checkout of the project: {stdout}{stderr}");
+    assert_eq!(status, 75, "another checkout of the project: {stdout}{stderr}");
     let verdict = events(&stdout).pop().unwrap();
     assert_eq!(verdict["concurrency"]["scope"], "project");
     assert_eq!(verdict["holders"][0]["checkout"], main.dir.0.display().to_string().as_str());
@@ -817,7 +827,7 @@ fn a_project_is_found_from_below_and_must_name_itself() {
     let mut command = isolated(&outside.0, &project.locks.0, &["list"]);
     command.env_remove("CAIM_ROOT").current_dir(&outside.0);
     let (status, output) = run(&mut command);
-    assert_eq!(status, 2, "{output}");
+    assert_eq!(status, 78, "{output}");
     assert!(output.contains("no caim.toml in the current directory or above it"), "{output}");
 
     for (text, expected) in [
@@ -827,7 +837,7 @@ fn a_project_is_found_from_below_and_must_name_itself() {
     ] {
         fs::write(project.dir.path("caim.toml"), text).unwrap();
         let (status, output) = project.run(&["list"]);
-        assert_eq!(status, 2, "{text:?}: {output}");
+        assert_eq!(status, 78, "{text:?}: {output}");
         assert!(output.contains(expected), "{text:?}: {output}");
     }
 }
@@ -842,7 +852,7 @@ fn a_machine_scoped_group_spans_projects() {
     other.task("check", "bake", &format!("description = \"t\"\n{machine}"), "echo bake");
     let holder = Holder::start(one.x(&["render"]), "render", &scratch.0);
     let (status, stdout, stderr) = split(&mut other.x(&["bake"]));
-    assert_eq!(status, 4, "{stdout}{stderr}");
+    assert_eq!(status, 75, "{stdout}{stderr}");
     assert!(stderr.contains("gpu is held by render (pid "), "{stderr}");
     assert!(stderr.contains(&format!("in {}", one.dir.0.display())), "{stderr}");
     let (status, output) = holder.release();
@@ -873,7 +883,7 @@ fn shared_holders_run_together_and_keep_an_exclusive_one_out() {
     let one = Holder::start(project.x(&["test"]), "one", &scratch.0);
     let two = Holder::start(project.x(&["test"]), "two", &scratch.0);
     let (status, stdout, stderr) = split(&mut project.x(&["build"]));
-    assert_eq!(status, 4, "a build waits for the tests to leave: {stdout}{stderr}");
+    assert_eq!(status, 75, "a build waits for the tests to leave: {stdout}{stderr}");
     assert_eq!(stderr.matches("test (pid ").count(), 2, "{stderr}");
     assert_eq!(project.run(&["lint"]).0, 0, "an undeclared task runs alongside");
     assert_eq!(one.release().0, 0);
@@ -881,7 +891,7 @@ fn shared_holders_run_together_and_keep_an_exclusive_one_out() {
 
     let build = Holder::start(project.x(&["build"]), "build", &scratch.0);
     let (status, output) = project.run(&["test"]);
-    assert_eq!(status, 4, "a test waits for the build to leave: {output}");
+    assert_eq!(status, 75, "a test waits for the build to leave: {output}");
     assert_eq!(project.run(&["lint"]).0, 0, "an undeclared task runs alongside");
     assert_eq!(build.release().0, 0);
     assert_eq!(project.run(&["test"]).0, 0);
@@ -900,7 +910,7 @@ fn a_limit_admits_that_many_shared_holders() {
     let first = Holder::start(project.x(&["slot"]), "one", &scratch.0);
     let second = Holder::start(project.x(&["slot"]), "two", &scratch.0);
     let (status, stdout, stderr) = split(&mut project.x(&["slot"]));
-    assert_eq!(status, 4, "{stdout}{stderr}");
+    assert_eq!(status, 75, "{stdout}{stderr}");
     assert_eq!(stderr.matches("slot (pid ").count(), 2, "{stderr}");
     let (status, output) = first.release();
     assert_eq!(status, 0, "{output}");
@@ -921,7 +931,7 @@ fn a_group_already_held_by_this_run_does_not_block_it() {
     );
     let (status, output) = project.run(&["top"]);
     assert_eq!(status, 0, "{output}");
-    assert_eq!(output.matches("[base] VERDICT PASS").count(), 2, "{output}");
+    assert_eq!(output.matches("[base] exit=0").count(), 2, "{output}");
 }
 
 #[test]
@@ -957,7 +967,7 @@ fn a_bad_concurrency_declaration_is_setup() {
         let project = Project::new();
         project.task("check", "bad", toml, "exit 0");
         let (status, output) = project.run(&["list"]);
-        assert_eq!(status, 2, "{toml}: {output}");
+        assert_eq!(status, 78, "{toml}: {output}");
         assert!(output.contains(expected), "{toml}: {output}");
     }
 }
@@ -1011,19 +1021,19 @@ fn an_unguarded_task_reads_from_the_terminal() {
     let mut child = command.spawn().unwrap();
     unsafe { libc::close(slave) };
     unsafe { libc::write(master, b"yes\n".as_ptr() as *const libc::c_void, 4) };
-    let text = match read_terminal_until(master, "VERDICT") {
+    let text = match read_terminal_until(master, "] exit=") {
         Ok(text) => text,
         Err(text) => {
             unsafe { libc::kill(-(child.id() as i32), libc::SIGKILL) };
             child.wait().unwrap();
             unsafe { libc::close(master) };
-            panic!("the run hung or the terminal closed before its VERDICT: {text}");
+            panic!("the run hung or the terminal closed before its exit line: {text}");
         }
     };
     let status = child.wait().unwrap();
     unsafe { libc::close(master) };
     assert!(text.contains("got yes"), "{text}");
-    assert!(text.contains("[ask] VERDICT PASS exit=0"), "{text}");
+    assert!(text.contains("[ask] exit=0"), "{text}");
     assert_eq!(status.code(), Some(0), "{text}");
 }
 
@@ -1037,10 +1047,10 @@ fn a_task_declares_its_idle_time_and_stop_steps() {
         "echo started; exec tail -f /dev/null",
     );
     let (status, stdout, stderr) = split(project.x(&["quiet"]).env("GUARD_STALL_SECONDS", "600"));
-    assert_eq!(status, 3, "{stdout}{stderr}");
+    assert_eq!(status, 124, "{stdout}{stderr}");
     assert!(stderr.contains("no progress for 1 s"), "{stderr}");
     assert!(stderr.contains("[stop] INT to 1 process(es)"), "{stderr}");
-    assert_eq!(last_line(&stdout), "[quiet] VERDICT VOID exit=3 (stalled)", "{stdout}");
+    assert_eq!(last_line(&stdout), "[quiet] exit=124 (stalled)", "{stdout}");
     for (toml, expected) in [
         ("description = \"t\"\nidle = 0\n", "idle is a positive number of seconds"),
         ("description = \"t\"\nstop = []\n", "stop needs at least one step"),
@@ -1050,7 +1060,7 @@ fn a_task_declares_its_idle_time_and_stop_steps() {
         let project = Project::new();
         project.task("check", "bad", toml, "exit 0");
         let (status, output) = project.run(&["list"]);
-        assert_eq!(status, 2, "{toml}: {output}");
+        assert_eq!(status, 78, "{toml}: {output}");
         assert!(output.contains(expected), "{toml}: {output}");
     }
 }
@@ -1081,14 +1091,14 @@ fn a_tasks_env_and_dir_are_its_own() {
         let project = Project::new();
         project.task("check", "bad", toml, "exit 0");
         let (status, output) = project.run(&["list"]);
-        assert_eq!(status, 2, "{toml}: {output}");
+        assert_eq!(status, 78, "{toml}: {output}");
         assert!(output.contains(expected), "{toml}: {output}");
     }
     let project = Project::new();
     project.task("check", "nowhere", "description = \"t\"\ndir = \"missing\"\n", "exit 0");
     let (status, output) = project.run(&["nowhere"]);
-    assert_eq!(status, 2, "{output}");
-    assert!(output.contains("SETUP: nowhere did not start; its dir missing is not a directory"), "{output}");
+    assert_eq!(status, 78, "{output}");
+    assert!(output.contains("nowhere did not start; its dir missing is not a directory"), "{output}");
 }
 
 #[test]
@@ -1106,7 +1116,7 @@ fn a_task_runs_what_its_requirement_builds() {
     let (status, output) = project.run(&["use"]);
     assert_eq!(status, 0, "{output}");
     assert!(output.contains("built tool ran"), "{output}");
-    assert_eq!(last_line(&output), "[use] VERDICT PASS exit=0", "{output}");
+    assert_eq!(last_line(&output), "[use] exit=0", "{output}");
 }
 
 #[test]
