@@ -23,10 +23,10 @@ Download a release archive for your platform from [Releases](../../releases) (`c
 mise use -g github:tang3cko/Caim
 ```
 
-To build from source, with the Rust pinned in `mise.toml`:
+To build from source, with Rust 1.85 or later:
 
 ```bash
-cargo build --release --locked
+cargo install --locked --git https://github.com/tang3cko/Caim
 ```
 
 ## Quick start
@@ -197,16 +197,18 @@ macOS, and Linux 5.3 or later. Built from source, Linux needs glibc 2.29 or late
 
 ## Development
 
-This repository is a caim project: `./caim` builds caim from these sources when they change, then runs it.
+This repository is a caim project: `./caim` builds caim from these sources when they change, then runs it. [mise](https://mise.jdx.dev) supplies the pinned Rust and shellcheck; the tests also need `expect`, `zsh`, `perl` and `shasum`, which macOS has and Debian and Ubuntu install with `apt-get install expect zsh`, and `./caim linux` needs [Apple container](https://github.com/apple/container).
 
 ```bash
+mise install
+cargo fetch --locked          # the crates, once: ./caim builds offline
 ./caim check                  # lint, test, launcher and terminal, as CI does
 ./caim fmt                    # cargo fmt
 ./caim test --filter NAME     # one test
 ./caim linux --task test      # a task on Linux, in an Apple container
 ```
 
-`./caim --build` only brings the binary up to date, and `./caim --check` exits 1 when it is stale. Builds run offline with every dependency pinned, so the crates must be in the local cargo cache. A release is made by raising `version` in `Cargo.toml` on main.
+`./caim --build` only brings the binary up to date, and `./caim --check` exits 1 when it is stale. A release is made by raising `version` in `Cargo.toml` on main.
 
 ## License
 
