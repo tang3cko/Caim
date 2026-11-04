@@ -21,7 +21,7 @@ mkdir -p "$PROJECT/scripts" "$PROJECT/deep/er"
 printf 'name = "launcher-test"\n\n[tasks.hello]\ndescription = "says hello"\nrun = ["scripts/hello"]\n' > "$PROJECT/caim.toml"
 cat > "$PROJECT/scripts/hello" <<'TASK'
 #!/usr/bin/env bash
-echo "hello from $TASK_NAME in $PWD"
+echo "hello from $CAIM_TASK in $PWD"
 TASK
 chmod +x "$PROJECT/scripts/hello"
 

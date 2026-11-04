@@ -16,7 +16,7 @@ run = ["tasks/lint"]
 description = "The cargo tests"
 group = "check"
 concurrency = { group = "cargo", scope = "checkout" }
-run = "cargo test --locked -- $TASK_ARG_FILTER"
+run = "cargo test --locked -- $CAIM_ARG_FILTER"
 
 [[tasks.test.args]]
 name = "filter"

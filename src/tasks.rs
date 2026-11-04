@@ -168,9 +168,8 @@ fn check(name: &str, declaration: &Declaration, at: &str, hooks: &Commands) -> R
         }
     }
     for key in declaration.env.keys() {
-        let caims = ["TASK_", "GUARD_", "CAIM_"].iter().any(|prefix| key.starts_with(prefix));
-        if key.is_empty() || key.contains('=') || key.contains('\0') || caims {
-            return Err(setup(format!("{at}: env cannot set {key:?}; TASK_, GUARD_ and CAIM_ belong to caim")));
+        if key.is_empty() || key.contains('=') || key.contains('\0') || key.starts_with("CAIM_") {
+            return Err(setup(format!("{at}: env cannot set {key:?}; CAIM_ names belong to caim")));
         }
     }
     let mut seen = BTreeSet::new();
@@ -362,7 +361,7 @@ fn name_tasks<'t>(tasks: &'t BTreeMap<String, Task>, args: &[String]) -> std::re
 }
 
 fn env_name(arg: &str) -> String {
-    format!("TASK_ARG_{}", arg.to_ascii_uppercase().replace('-', "_"))
+    format!("CAIM_ARG_{}", arg.to_ascii_uppercase().replace('-', "_"))
 }
 
 fn arguments(values: &BTreeMap<String, String>) -> Vec<(String, String)> {
@@ -874,7 +873,7 @@ impl<'a> Runner<'a> {
     fn run_holding(&mut self, task: &Task, values: &BTreeMap<String, String>) -> i32 {
         let name = &task.name;
         if let Some(lock) = &task.declaration.lock {
-            let status = self.call_hook(name, lock, self.hook(lock).env("TASK_NAME", name).envs(arguments(values)));
+            let status = self.call_hook(name, lock, self.hook(lock).env("CAIM_TASK", name).envs(arguments(values)));
             if status != OK {
                 self.out.borrow().ended(name, status, &Reason::Lock(lock.clone()), None);
                 return status;
@@ -915,12 +914,12 @@ impl<'a> Runner<'a> {
     fn supervised(&self, task: &Task, values: &BTreeMap<String, String>, channel: &Channel) -> (i32, Reason) {
         let name = &task.name;
         let say = |text: &str| self.out.borrow().message(name, text);
-        let idle = match (task.declaration.idle, std::env::var("GUARD_STALL_SECONDS")) {
+        let idle = match (task.declaration.idle, std::env::var("CAIM_STALL_SECONDS")) {
             (Some(idle), _) => idle,
             (None, Ok(text)) => match text.parse::<f64>() {
                 Ok(seconds) if seconds.is_finite() && seconds > 0.0 => seconds,
                 _ => {
-                    say(&format!("{name} did not start; GUARD_STALL_SECONDS={text:?} is not a positive number"));
+                    say(&format!("{name} did not start; CAIM_STALL_SECONDS={text:?} is not a positive number"));
                     return (CONFIG, Reason::NotStarted);
                 }
             },
@@ -931,13 +930,13 @@ impl<'a> Runner<'a> {
         let watchers = channel.text("watchers");
         // A runner started under another guard registers with it; the watchers started under this
         // run register here.
-        let parent_watchers = std::env::var("GUARD_WATCHERS").unwrap_or_default();
+        let parent_watchers = std::env::var("CAIM_WATCHERS").unwrap_or_default();
         let mut environment: Vec<(String, String)> = vec![
-            ("GUARD_DECLARED".into(), declared.clone()),
-            ("GUARD_LAUNCH_REGISTRY".into(), registry.clone()),
-            ("GUARD_WATCHERS".into(), watchers.clone()),
-            ("GUARD_STALL_SECONDS".into(), idle.to_string()),
-            ("TASK_NAME".into(), name.clone()),
+            ("CAIM_DECLARED".into(), declared.clone()),
+            ("CAIM_LAUNCH_REGISTRY".into(), registry.clone()),
+            ("CAIM_WATCHERS".into(), watchers.clone()),
+            ("CAIM_STALL_SECONDS".into(), idle.to_string()),
+            ("CAIM_TASK".into(), name.clone()),
         ];
         environment.extend(arguments(values));
         environment.extend(task.declaration.env.iter().map(|(key, value)| (key.clone(), value.clone())));
@@ -1063,10 +1062,10 @@ impl<'a> Runner<'a> {
                 &task.name,
                 hook,
                 self.hook(hook)
-                    .env("TASK_NAME", &task.name)
+                    .env("CAIM_TASK", &task.name)
                     .envs(arguments(values))
-                    .env("TASK_STATUS", status.to_string())
-                    .env("TASK_STARTED", channel.path("started")),
+                    .env("CAIM_STATUS", status.to_string())
+                    .env("CAIM_STARTED", channel.path("started")),
             );
             if code != OK {
                 status = code;

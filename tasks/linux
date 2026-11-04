@@ -12,8 +12,8 @@ if [[ ! -d "$CACHE/rustup/toolchains/$RUST-aarch64-unknown-linux-gnu" ]]; then
   container run --rm -v "$CACHE/rustup:/rustup" "$IMAGE" sh -c \
     "cp -R /usr/local/rustup/. /rustup/ && RUSTUP_HOME=/rustup rustup toolchain install $RUST --profile minimal -c clippy -c rustfmt"
 fi
-command="./caim ${TASK_ARG_TASK:-test}"
-if [[ -n "${TASK_ARG_CLIPPY:-}" ]]; then
+command="./caim ${CAIM_ARG_TASK:-test}"
+if [[ -n "${CAIM_ARG_CLIPPY:-}" ]]; then
   command="cargo clippy --offline --locked --all-targets -- -D warnings"
 fi
 exec container run --rm \

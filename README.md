@@ -93,9 +93,9 @@ A task needs only `run`: a string goes through `sh -c`, a list is the command an
 | `description` | One line for `list` and `--help` | none |
 | `group` | The heading `list` shows the task under | none |
 | `requires` | Tasks run first, each to success, with their defaults | none |
-| `args` | Arguments: `name`, `help`, and `choices`, `default`, `required` or `flag`; the command sees them as `TASK_ARG_<NAME>` | none |
+| `args` | Arguments: `name`, `help`, and `choices`, `default`, `required` or `flag`; the command sees them as `CAIM_ARG_<NAME>` | none |
 | `guard` | Whether the stall guard watches the run; `false` gives the command the terminal | `true` |
-| `idle` | Seconds without progress before the run is stopped | `GUARD_STALL_SECONDS`, else 180 |
+| `idle` | Seconds without progress before the run is stopped | `CAIM_STALL_SECONDS`, else 180 |
 | `stop` | Stop steps, `"SIGNAL:SECONDS"` (INT, TERM, HUP, QUIT or KILL) | `["TERM:20", "KILL:20"]` |
 | `watch.logs`, `watch.dirs` | Progress sources besides the output, relative to the project | the output only |
 | `env` | Variables for this task's command alone | none |
@@ -106,7 +106,7 @@ A task needs only `run`: a string goes through `sh -c`, a list is the command an
 | `human` | Marks a task a person runs rather than an agent | `false` |
 | `hidden` | Leaves the task out of `list` | `false` |
 
-A hook is declared under `[hooks.<name>]` with its own `run`. A lock hook that fails ends the run with its status; an after hook sees `TASK_STATUS` and exits 0 to leave it, or with the status the run should end with. A command can also declare progress sources while it runs, by appending `log /absolute/path` or `dir /absolute/path` to the file `GUARD_DECLARED` names.
+A hook is declared under `[hooks.<name>]` with its own `run`. A lock hook that fails ends the run with its status; an after hook sees `CAIM_STATUS` and exits 0 to leave it, or with the status the run should end with. A command can also declare progress sources while it runs, by appending `log /absolute/path` or `dir /absolute/path` to the file `CAIM_DECLARED` names.
 
 ### Concurrency
 
@@ -127,14 +127,14 @@ on_busy = "refuse"                # "wait" (the default) or "refuse": exit 75 at
 
 | Variable | Seen by | Holds |
 |---|---|---|
-| `TASK_NAME` | the command, hooks | the task's name |
-| `TASK_ARG_<NAME>` | the command, hooks | each argument, upper-cased with `-` as `_` |
-| `TASK_STATUS`, `TASK_STARTED` | after hooks | the status so far, and a file whose time marks the start |
-| `GUARD_DECLARED` | the command | the file to append progress sources to |
-| `GUARD_STALL_SECONDS` | the command | the idle time in effect |
-| `GUARD_WATCHERS`, `GUARD_LAUNCH_REGISTRY`, `CAIM_HELD` | the command | for a caim, or a launched app, the command starts |
+| `CAIM_TASK` | the command, hooks | the task's name |
+| `CAIM_ARG_<NAME>` | the command, hooks | each argument, upper-cased with `-` as `_` |
+| `CAIM_STATUS`, `CAIM_STARTED` | after hooks | the status so far, and a file whose time marks the start |
+| `CAIM_DECLARED` | the command | the file to append progress sources to |
+| `CAIM_STALL_SECONDS` | the command | the idle time in effect |
+| `CAIM_WATCHERS`, `CAIM_LAUNCH_REGISTRY`, `CAIM_HELD` | the command | for a caim, or a launched app, the command starts |
 
-Caim reads `CAIM_ROOT`, `CAIM_LOCK_DIR`, `GUARD_STALL_SECONDS`, `XDG_CACHE_HOME` and `TMPDIR`.
+Caim reads `CAIM_ROOT`, `CAIM_LOCK_DIR`, `CAIM_STALL_SECONDS`, `XDG_CACHE_HOME` and `TMPDIR`.
 
 ## Exit status
 
@@ -144,7 +144,7 @@ A task that ran exits with its command's status, 128 plus the signal when a sign
 |---|---|
 | 64 | the arguments did not match the declaration |
 | 75 | a concurrency group with `on_busy = "refuse"` was held |
-| 78 | `caim.toml`, a task's `dir` or `GUARD_STALL_SECONDS` is invalid |
+| 78 | `caim.toml`, a task's `dir` or `CAIM_STALL_SECONDS` is invalid |
 | 124 | the run stalled and was stopped |
 | 125 | caim itself failed |
 | 126 | the command could not be executed |

@@ -75,12 +75,12 @@ impl Project {
 
 fn isolated(root: &Path, locks: &Path, args: &[&str]) -> Command {
     let mut command = caim();
-    command.args(args).env("CAIM_ROOT", root).env("CAIM_LOCK_DIR", locks).env("CAIM", env!("CARGO_BIN_EXE_caim"));
     for (key, _) in std::env::vars() {
-        if key.starts_with("TASK_ARG_") || key.starts_with("GUARD_") || key == "CAIM_HELD" {
+        if key.starts_with("CAIM_") {
             command.env_remove(key);
         }
     }
+    command.args(args).env("CAIM_ROOT", root).env("CAIM_LOCK_DIR", locks).env("CAIM", env!("CARGO_BIN_EXE_caim"));
     command
 }
 
@@ -223,8 +223,8 @@ fn a_broken_declaration_stops_everything_as_setup() {
 fn several_tasks_run_in_order_and_stop_at_the_first_that_does_not_pass() {
     let project = Project::new();
     let say = "description = \"t\"\n[[args]]\nname = \"word\"\nhelp = \"w\"\ndefault = \"none\"\n";
-    project.task("check", "one", say, "echo \"one $TASK_ARG_WORD\" >> \"$ORDER\"");
-    project.task("check", "two", say, "echo \"two $TASK_ARG_WORD\" >> \"$ORDER\"");
+    project.task("check", "one", say, "echo \"one $CAIM_ARG_WORD\" >> \"$ORDER\"");
+    project.task("check", "two", say, "echo \"two $CAIM_ARG_WORD\" >> \"$ORDER\"");
     project.task("check", "fails", SIMPLE, "echo fails >> \"$ORDER\"; exit 5");
     project.task("check", "top", "description = \"t\"\nrequires = [\"one\"]\n", "echo top >> \"$ORDER\"");
     let order = project.dir.path("order");
@@ -279,7 +279,7 @@ fn several_tasks_run_in_order_and_stop_at_the_first_that_does_not_pass() {
 fn a_task_written_in_caim_toml_runs_like_any_other() {
     let project = Project::new();
     project.written(
-        "\n[tasks.greet]\ndescription = \"says hello\"\nrun = 'echo \"hello $TASK_ARG_WHO from $PWD\" | tr a-z A-Z'\n\
+        "\n[tasks.greet]\ndescription = \"says hello\"\nrun = 'echo \"hello $CAIM_ARG_WHO from $PWD\" | tr a-z A-Z'\n\
          [[tasks.greet.args]]\nname = \"who\"\nhelp = \"whom\"\ndefault = \"world\"\n\n\
          [tasks.literal]\ndescription = \"no shell\"\ngroup = \"tools\"\nrun = [\"echo\", \"$HOME\", \"a  b\"]\n\n\
          [tasks.both]\ndescription = \"after greet\"\nrequires = [\"greet\"]\nrun = \"echo both\"\n\n\
@@ -338,7 +338,7 @@ fn a_passing_run_streams_its_output_and_ends_in_the_verdict() {
         "check",
         "ok",
         &toml,
-        "echo \"spec=$TASK_ARG_SPEC dry=$TASK_ARG_DRY_RUN cwd=$PWD run=${GUARD_RUN_DIR-unset}\"\necho 'to stderr' >&2\nfor i in 1 2 3; do echo \"line $i\"; done",
+        "echo \"spec=$CAIM_ARG_SPEC dry=$CAIM_ARG_DRY_RUN cwd=$PWD run=${GUARD_RUN_DIR-unset}\"\necho 'to stderr' >&2\nfor i in 1 2 3; do echo \"line $i\"; done",
     );
     let (status, stdout, stderr) = split(&mut project.x(&["ok", "--spec", "[tag] name", "--dry-run"]));
     assert_eq!(status, 0, "{stdout}{stderr}");
@@ -390,7 +390,7 @@ fn required_tasks_run_first_and_stop_the_run_when_they_fail() {
 #[test]
 fn a_lock_hook_refuses_before_the_run_starts() {
     let project = Project::new();
-    project.hook("editor-lock", "echo \"BLOCKED: $TASK_NAME did not start\"; exit 4");
+    project.hook("editor-lock", "echo \"BLOCKED: $CAIM_TASK did not start\"; exit 4");
     project.task("check", "locked", "description = \"t\"\nlock = \"editor-lock\"\n", "touch \"$MARK\"");
     let mark = project.dir.path("ran");
     let (status, stdout, stderr) = split(project.x(&["locked"]).env("MARK", &mark));
@@ -406,7 +406,7 @@ fn after_hooks_see_the_status_and_may_change_it() {
     let project = Project::new();
     project.hook(
         "sweep",
-        "test -f \"$TASK_STARTED\" || exit 9; echo \"swept $TASK_NAME status=$TASK_STATUS\"; exit ${SWEEP_STATUS:-0}",
+        "test -f \"$CAIM_STARTED\" || exit 9; echo \"swept $CAIM_TASK status=$CAIM_STATUS\"; exit ${SWEEP_STATUS:-0}",
     );
     project.task("check", "swept", "description = \"t\"\nafter = [\"sweep\"]\n", "echo 'done'");
     let (status, output) = project.run(&["swept"]);
@@ -422,7 +422,7 @@ fn after_hooks_see_the_status_and_may_change_it() {
 fn a_silent_run_is_stopped_as_stalled() {
     let project = Project::new();
     project.task("check", "silent", SIMPLE, "echo started; exec tail -f /dev/null");
-    let (status, stdout, stderr) = split(project.x(&["silent"]).env("GUARD_STALL_SECONDS", "1"));
+    let (status, stdout, stderr) = split(project.x(&["silent"]).env("CAIM_STALL_SECONDS", "1"));
     assert_eq!(status, 124, "{stdout}{stderr}");
     assert!(stderr.contains("made no progress for 1 s"), "{stderr}");
     assert!(stderr.contains("[stop] TERM to 1 process(es)"), "{stderr}");
@@ -480,7 +480,7 @@ fn a_signal_ignored_at_start_stays_ignored_between_runs() {
 #[test]
 fn a_declaration_the_watch_cannot_follow_stops_the_run() {
     let project = Project::new();
-    project.task("check", "declares", SIMPLE, "echo \"tree /\" >> \"$GUARD_DECLARED\"; exec tail -f /dev/null");
+    project.task("check", "declares", SIMPLE, "echo \"tree /\" >> \"$CAIM_DECLARED\"; exec tail -f /dev/null");
     let (status, output) = project.run(&["declares"]);
     assert_eq!(status, 125, "{output}");
     assert!(output.contains("its progress could not be watched (unknown watch declaration: tree /)"), "{output}");
@@ -495,7 +495,7 @@ fn the_files_a_task_talks_back_through_are_gone_after_the_run() {
         "check",
         "talks",
         SIMPLE,
-        "echo \"$GUARD_DECLARED\"; echo \"$GUARD_LAUNCH_REGISTRY\"; echo \"$GUARD_WATCHERS\"",
+        "echo \"$CAIM_DECLARED\"; echo \"$CAIM_LAUNCH_REGISTRY\"; echo \"$CAIM_WATCHERS\"",
     );
     let (status, stdout, stderr) = split(&mut project.x(&["talks"]));
     assert_eq!(status, 0, "{stdout}{stderr}");
@@ -576,7 +576,7 @@ fn json_streams_one_event_per_line_and_ends_in_the_verdict() {
     assert_eq!(of(&all, "exit").len(), 2);
 
     project.task("check", "silent", SIMPLE, "exec tail -f /dev/null");
-    let (status, stdout, _) = split(project.x(&["silent", "--json"]).env("GUARD_STALL_SECONDS", "1"));
+    let (status, stdout, _) = split(project.x(&["silent", "--json"]).env("CAIM_STALL_SECONDS", "1"));
     assert_eq!(status, 124);
     let all = events(&stdout);
     assert_eq!(all.last().unwrap()["reason"], "stalled");
@@ -609,7 +609,7 @@ fn an_unguarded_task_keeps_the_terminal() {
 }
 
 const HOLDS: &str =
-    "echo $$ > \"$READY\"\n\"$CAIM\" written \"$GO\" 180 > /dev/null\necho \"$TASK_NAME-end\" >> \"$ORDER\"";
+    "echo $$ > \"$READY\"\n\"$CAIM\" written \"$GO\" 180 > /dev/null\necho \"$CAIM_TASK-end\" >> \"$ORDER\"";
 
 struct Holder {
     child: Child,
@@ -1046,7 +1046,7 @@ fn a_task_declares_its_idle_time_and_stop_steps() {
         "description = \"q\"\nidle = 1\nstop = [\"INT:20\", \"KILL:20\"]\n",
         "echo started; exec tail -f /dev/null",
     );
-    let (status, stdout, stderr) = split(project.x(&["quiet"]).env("GUARD_STALL_SECONDS", "600"));
+    let (status, stdout, stderr) = split(project.x(&["quiet"]).env("CAIM_STALL_SECONDS", "600"));
     assert_eq!(status, 124, "{stdout}{stderr}");
     assert!(stderr.contains("no progress for 1 s"), "{stderr}");
     assert!(stderr.contains("[stop] INT to 1 process(es)"), "{stderr}");
@@ -1085,7 +1085,7 @@ fn a_tasks_env_and_dir_are_its_own() {
     for (toml, expected) in [
         ("description = \"t\"\ndir = \"/tmp\"\n", "dir is a path inside the project"),
         ("description = \"t\"\ndir = \"../elsewhere\"\n", "dir is a path inside the project"),
-        ("description = \"t\"\n[env]\nTASK_ARG_X = \"1\"\n", "env cannot set \"TASK_ARG_X\""),
+        ("description = \"t\"\n[env]\nCAIM_ARG_X = \"1\"\n", "env cannot set \"CAIM_ARG_X\""),
         ("description = \"t\"\n[env]\n\"A=B\" = \"1\"\n", "env cannot set \"A=B\""),
     ] {
         let project = Project::new();
@@ -1122,18 +1122,18 @@ fn a_task_runs_what_its_requirement_builds() {
 #[test]
 fn tasks_on_one_line_keep_their_environments_apart() {
     let project = Project::new();
-    project.hook("gate", "echo \"gate sees platform=${TASK_ARG_PLATFORM:-none}\"");
+    project.hook("gate", "echo \"gate sees platform=${CAIM_ARG_PLATFORM:-none}\"");
     project.task(
         "build",
         "first",
         "description = \"f\"\n[[args]]\nname = \"platform\"\nhelp = \"p\"\n",
-        "echo \"first sees platform=${TASK_ARG_PLATFORM:-none}\"",
+        "echo \"first sees platform=${CAIM_ARG_PLATFORM:-none}\"",
     );
     project.task(
         "build",
         "second",
         "description = \"s\"\nlock = \"gate\"\n",
-        "echo \"second sees platform=${TASK_ARG_PLATFORM:-none}\"",
+        "echo \"second sees platform=${CAIM_ARG_PLATFORM:-none}\"",
     );
     let temporary = TempDir::new();
     let (status, output) = run(project.x(&["first", "--platform", "Win64", "second"]).env("TMPDIR", &temporary.0));
