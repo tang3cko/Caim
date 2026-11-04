@@ -4,7 +4,7 @@ A task runner and process supervisor for a project's tasks. Caim judges whether 
 
 ## Platforms
 
-macOS (kqueue and libproc). Everything that depends on the operating system is in `src/native/`, one file per platform.
+macOS (kqueue and libproc) and Linux 5.3 or later (epoll, pidfd, inotify, signalfd and /proc). Built from source, Linux needs glibc 2.29 or later; the released Linux binaries are built on Ubuntu 26.04 and need glibc 2.43. Everything that depends on the operating system is in `src/native/`, one file per platform.
 
 ## Usage
 

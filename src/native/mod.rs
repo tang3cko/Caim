@@ -8,7 +8,12 @@ mod macos;
 #[cfg(target_os = "macos")]
 use macos as os;
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(target_os = "linux")]
+mod linux;
+#[cfg(target_os = "linux")]
+use linux as os;
+
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
 compile_error!("caim has no src/native implementation for this operating system");
 
 pub use events::{exited_pid, monotonic, process_exited, restore_signals, Event, Interest, Token, TERMINATION};

@@ -60,6 +60,10 @@ jobs:
         include:
           - target: aarch64-apple-darwin
             runner: macos-latest
+          - target: x86_64-unknown-linux-gnu
+            runner: ubuntu-26.04
+          - target: aarch64-unknown-linux-gnu
+            runner: ubuntu-26.04-arm
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 20
     permissions:
@@ -76,6 +80,10 @@ jobs:
         uses: jdx/mise-action@6be3c7ed4c21d4f76b208d351d95aac273ebb76d # v5.2.4
         with:
           cache: false
+
+      - name: Install zsh and expect
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends zsh expect
 
       - name: Test
         run: cargo test --locked

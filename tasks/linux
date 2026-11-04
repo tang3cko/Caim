@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+set -euo pipefail
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+CACHE="${LINUX_CACHE:-${TMPDIR:-/tmp}/caim-linux}"
+RUST="$(sed -n 's/^rust = "\(.*\)"/\1/p' "$ROOT/mise.toml")"
+IMAGE="caim-linux:$(shasum -a 256 "$ROOT/tests/linux/Containerfile" | cut -c1-12)"
+mkdir -p "$CACHE/target" "$CACHE/rustup"
+if ! container image inspect "$IMAGE" > /dev/null 2>&1; then
+  container build --tag "$IMAGE" --file "$ROOT/tests/linux/Containerfile" "$ROOT/tests/linux"
+fi
+if [[ ! -d "$CACHE/rustup/toolchains/$RUST-aarch64-unknown-linux-gnu" ]]; then
+  container run --rm -v "$CACHE/rustup:/rustup" "$IMAGE" sh -c \
+    "cp -R /usr/local/rustup/. /rustup/ && RUSTUP_HOME=/rustup rustup toolchain install $RUST --profile minimal -c clippy -c rustfmt"
+fi
+command="./caim ${TASK_ARG_TASK:-test}"
+if [[ -n "${TASK_ARG_CLIPPY:-}" ]]; then
+  command="cargo clippy --offline --locked --all-targets -- -D warnings"
+fi
+exec container run --rm \
+  -v "$ROOT:/src" -v "$CACHE/target:/src/target" \
+  -v "$HOME/.cargo/registry:/usr/local/cargo/registry" -v "$CACHE/rustup:/rustup" \
+  -e RUSTUP_HOME=/rustup -e RUSTUP_TOOLCHAIN="$RUST" -w /src \
+  "$IMAGE" sh -c "$command"

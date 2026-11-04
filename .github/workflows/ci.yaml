@@ -39,14 +39,14 @@ jobs:
         run: cargo clippy --locked --all-targets -- -D warnings
 
       - name: Shellcheck
-        run: mise exec shellcheck@0.11.0 -- shellcheck caim tests/launcher/launcher_test.sh tests/terminal/job_control_test.sh tasks/lint
+        run: mise exec shellcheck@0.11.0 -- shellcheck caim tests/launcher/launcher_test.sh tests/terminal/job_control_test.sh tasks/lint tasks/linux
 
   test:
     name: Test (${{ matrix.os }})
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-latest]
+        os: [macos-latest, ubuntu-26.04]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 20
     permissions:
@@ -59,6 +59,10 @@ jobs:
 
       - name: Set up mise
         uses: jdx/mise-action@6be3c7ed4c21d4f76b208d351d95aac273ebb76d # v5.2.4
+
+      - name: Install zsh and expect
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends zsh expect
 
       - name: Cargo tests
         run: cargo test --locked

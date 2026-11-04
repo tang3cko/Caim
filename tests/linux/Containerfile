@@ -1,0 +1,4 @@
+FROM rust:1-trixie
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends zsh expect shellcheck procps \
+ && rm -rf /var/lib/apt/lists/*
