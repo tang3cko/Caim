@@ -23,6 +23,9 @@ build() {
       --manifest-path "$HOME_DIR/Cargo.toml" > "$log" 2>&1; then
     cat "$log" >&2
     echo "caim did not build ($HOME_DIR); log: $log" >&2
+    if grep -q offline "$log"; then
+      echo "the build is offline; cargo fetch --locked brings the crates into the local cache" >&2
+    fi
     exit 125
   fi
   printf '%s\n' "$sources" > "$STAMP.$$" && mv -f "$STAMP.$$" "$STAMP"
