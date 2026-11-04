@@ -1,4 +1,4 @@
-use caim::error::{Error, SETUP, UNAVAILABLE, USAGE};
+use caim::error::{Error, FAILED, USAGE};
 use caim::{completions, digests, tasks, waits};
 
 fn main() {
@@ -11,8 +11,8 @@ fn main() {
                 USAGE
             }
             Err(error) => {
-                eprintln!("ERROR: caim {}: {error}", args[0]);
-                SETUP
+                eprintln!("caim {}: {error}", args[0]);
+                FAILED
             }
         }
     } else if args.first().is_some_and(|mode| waits::MODES.contains(&mode.as_str())) {
@@ -23,8 +23,8 @@ fn main() {
                 USAGE
             }
             Err(error) => {
-                eprintln!("VOID: output/process watcher unavailable: {error}");
-                UNAVAILABLE
+                eprintln!("caim {}: the watch failed: {error}", args[0]);
+                FAILED
             }
         }
     } else if args.first().is_some_and(|mode| mode == completions::MODE) {

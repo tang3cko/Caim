@@ -59,5 +59,5 @@ fn hash_check_refuses_what_it_cannot_read() {
     fs::write(dir.path("bad.reads"), "not a digest  file\n").unwrap();
     assert_eq!(check(&dir, &["bad.reads"]).0, 64);
     assert_eq!(check(&dir, &[]).0, 64);
-    assert_eq!(check(&dir, &["absent.reads"]).0, 2);
+    assert_eq!(check(&dir, &["absent.reads"]).0, 125);
 }

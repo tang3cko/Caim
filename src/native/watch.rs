@@ -48,7 +48,7 @@ pub fn ready_file(path: &str) -> Result<()> {
 
 pub fn stall_message(pid: i32, idle: f64) -> String {
     format!(
-        "VOID: no progress for {idle} s while process {pid} was running: no new kind of line in its declared logs and no new entry in its declared directories"
+        "caim: no progress for {idle} s while process {pid} was running: no new kind of line in its declared logs and no new entry in its declared directories"
     )
 }
 
@@ -341,7 +341,7 @@ pub fn activity(pid: i32, idle: f64, plan: &WatchPlan, ready: &str, registration
         Watched::Exited => Ok(0),
         Watched::Stalled => {
             eprintln!("{}", stall_message(pid, idle));
-            Ok(crate::error::VOID)
+            Ok(crate::error::STALLED)
         }
         Watched::Interrupted(signal) => Ok(128 + signal),
     }

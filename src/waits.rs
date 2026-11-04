@@ -1,4 +1,7 @@
-use crate::error::{Error, Result, PROCESS_GONE, VOID};
+use crate::error::{Error, Result, STALLED};
+
+// As grep(1) exits 1 when nothing matched.
+const PROCESS_GONE: i32 = 1;
 use crate::native::{self, monotonic, Interest, Queue, RunPlan, StopStep, WatchPlan};
 use regex::bytes::Regex;
 use std::collections::BTreeSet;
@@ -26,8 +29,8 @@ fn process_id(text: &str) -> Result<i32> {
 }
 
 fn timeout(message: &str) -> i32 {
-    eprintln!("VOID: {message} when its hang guard ran out");
-    VOID
+    eprintln!("caim: {message} when its hang guard ran out");
+    STALLED
 }
 
 fn wait_exit(pids: &[i32], guard: Option<f64>, first: bool) -> Result<i32> {

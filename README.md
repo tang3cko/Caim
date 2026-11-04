@@ -11,6 +11,7 @@ Long builds, imports and test runs sometimes hang. A timeout either kills a run 
 - **The command's own exit status.** Caim exits with the task's status and uses the conventional codes of timeout(1), the shell and sysexits(3) for what it does itself.
 - **Concurrency groups.** Keep tasks that share an editor, a build directory or a device from running together, across every checkout and worktree of a project, exclusively or shared with a limit.
 - **A well-behaved supervisor.** Each run is a process group of its own; TERM, INT, HUP and QUIT stop it in steps; Ctrl-Z suspends the run and `fg` resumes it.
+- **Waiting without sleeping.** The scripts a task runs can wait on a process, a file or a log line through the same binary, by events, never a fixed delay, and check freshness stamps by SHA-256.
 - **Hooks.** A `lock` hook can hold a run back, and `after` hooks can change its status.
 - **JSON events** for tools and agents with `--json`, and **bash and zsh completion**.
 
@@ -161,9 +162,34 @@ eval "$(caim completions zsh)"    # or bash; for zsh, after compinit
 
 Completes `list`, task names, a task's arguments and their choices, from the project the shell is in.
 
-## Helper modes
+## Waiting from scripts
 
-The same binary carries the waiting modes shell scripts use (`exit`, `first-exit`, `written`, `line`, `activity`, `run`, `stop`) and SHA-256 modes (`hash`, `hash-check`). Their statuses are their own: a hang guard that runs out is 3.
+The scripts a task runs often have to wait: for a process to exit, a file to be written, a line to appear in a log. Caim gives them the same rule it follows itself, an event and never a fixed sleep, with an optional hang guard in seconds that only stops a wait that is stuck:
+
+```
+caim exit PID [GUARD]                         # a process exits
+caim first-exit --pid A --pid B [--guard S]   # the first of several exits; prints "exit PID"
+caim written FILE [GUARD]                     # a file is no longer empty
+caim line --match FILE REGEX [--pid P]        # a line matches; --after FILE GATE REGEX matches after a gate
+caim activity --pid P --idle S --log FILE     # watch a process caim did not start, by its progress
+caim run --idle S --output FILE --outcome FILE --step SIGNAL:SECONDS -- COMMAND
+caim stop --group G --step TERM:20 --step KILL:20
+```
+
+| Status | Meaning |
+|---|---|
+| 0 | what was waited for happened |
+| 1 | `line`: the process exited before a line matched |
+| 64 | the arguments were invalid |
+| 124 | the hang guard ran out, or the watched process stalled, or `stop` found processes outliving its last step |
+| 125 | the watch itself failed |
+| 128+N | caim was interrupted by signal N |
+
+`run` exits 0 whenever its command exited, and writes how it ended (`exit N`, `stall status=N`, `interrupted SIG status=N`, `unavailable status=N`) to its `--outcome` file.
+
+### Freshness stamps
+
+`caim hash` reads NUL-separated paths on stdin and prints `shasum -a 256` lines for them. `caim hash-check LIST...` hashes the files those lists name and prints `<list>\t<file>` for every one that changed or is missing; it exits 0 when none did, 1 when some did, and 125 when a list cannot be read.
 
 ## Platforms
 

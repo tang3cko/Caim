@@ -17,6 +17,8 @@ fn exit_and_first_exit() {
     assert_eq!(status, 0);
     assert!(output.contains(&format!("exit {}", second.pid())));
     assert_eq!(run(caim().args(["exit", &second.pid_text()])).0, 0);
+    let (status, output) = run(caim().args(["exit", &first.pid_text(), "0"]));
+    assert_eq!(status, 124, "a hang guard that runs out is a timeout: {output}");
     let waiter = spawn(caim().args(["exit", &first.pid_text(), "180"]));
     first.stop();
     assert_eq!(finish(waiter).0, 0);
@@ -61,7 +63,7 @@ fn written_and_lines() {
     assert_eq!(run(caim().args(["line", "--pid", &producer.pid_text(), "--match", &dir.text("log"), "^wanted$"])).0, 0);
     let (status, output) =
         run(caim().args(["line", "--pid", &producer.pid_text(), "--match", &dir.text("log"), "never present"]));
-    assert_eq!(status, 2);
+    assert_eq!(status, 1);
     assert!(output.contains(&format!("exit {}", producer.pid())));
     let args = ["line", "--pid", &producer.pid_text(), "--after", &dir.text("log"), "^wanted$", "^gate and wanted$"];
     assert_eq!(run(caim().args(args)).0, 0);
@@ -76,7 +78,7 @@ fn line_gate_strict() {
     assert_eq!(producer.reap(), 0);
     let (status, _) =
         run(caim().args(["line", "--pid", &producer.pid_text(), "--after", &dir.text("log"), "gate", "wanted"]));
-    assert_eq!(status, 2);
+    assert_eq!(status, 1);
 }
 
 #[test]
@@ -158,15 +160,15 @@ fn activity_declarations() {
     written(&dir.path("ready"));
     append(&dir.path("watch"), format!("tree {}\n", dir.0.display()).as_bytes());
     let (status, output) = finish(watcher);
-    assert_eq!(status, 1);
-    assert!(output.contains("output/process watcher unavailable"), "{output}");
+    assert_eq!(status, 125);
+    assert!(output.contains("the watch failed"), "{output}");
     assert!(output.contains("unknown watch declaration"), "{output}");
     assert!(!output.contains("no progress for"), "{output}");
     assert!(alive(victim.pid()), "coverage failure killed victim");
     fs::write(dir.path("watch"), "log relative.log\n").unwrap();
     let args = ["activity", "--pid", &victim.pid_text(), "--idle", "180", "--declared", &dir.text("watch")];
     let (status, output) = run(caim().args(args));
-    assert_eq!(status, 1);
+    assert_eq!(status, 125);
     assert!(output.contains("absolute path"), "{output}");
     victim.stop();
     assert_eq!(victim.reap(), 0);
@@ -279,7 +281,7 @@ fn run_stops_a_silent_command() {
         "echo started; exec tail -f /dev/null",
     ];
     let (status, output) = run(caim().args(args));
-    assert_eq!(status, 3, "{output}");
+    assert_eq!(status, 124, "{output}");
     assert!(output.contains("no progress for 1 s"), "{output}");
     assert!(output.contains("[stop] TERM to 1 process(es)"), "{output}");
     assert_eq!(fs::read_to_string(dir.path("outcome")).unwrap(), "stall status=143\n");

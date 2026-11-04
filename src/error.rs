@@ -11,12 +11,6 @@ pub const FAILED: i32 = 125;
 pub const CANNOT_EXECUTE: i32 = 126;
 pub const NOT_FOUND: i32 = 127;
 
-// The waiting and hashing modes keep the statuses the scripts that call them rely on.
-pub const SETUP: i32 = 2;
-pub const VOID: i32 = 3;
-pub const UNAVAILABLE: i32 = 1;
-pub const PROCESS_GONE: i32 = 2;
-
 #[derive(Debug)]
 pub enum Error {
     Usage(String),

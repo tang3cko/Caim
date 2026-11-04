@@ -125,8 +125,8 @@ pub fn stop(group: i32, pids: &[i32], steps: &[StopStep], out: &mut dyn Write) -
         return Ok(0);
     }
     let last = steps.last().map_or("no signal".to_string(), |step| signal_name(step.signal));
-    eprintln!("VOID: process(es) {} outlived {last}", listed(&left));
-    Ok(crate::error::VOID)
+    eprintln!("caim: process(es) {} outlived {last}", listed(&left));
+    Ok(crate::error::STALLED)
 }
 
 #[derive(Clone, Debug, Default)]
@@ -411,7 +411,7 @@ pub fn run(plan: &RunPlan) -> Result<i32> {
                 let _ = io::stdout().flush();
             },
             stalled: &mut |pid| eprintln!("{}", stall_message(pid, idle)),
-            unavailable: &mut |error| eprintln!("VOID: output/process watcher unavailable: {error}"),
+            unavailable: &mut |error| eprintln!("caim: the watch failed: {error}"),
             stops: &mut stdout,
             output: &mut |_| {},
         },
@@ -419,8 +419,8 @@ pub fn run(plan: &RunPlan) -> Result<i32> {
     record(&plan.outcome, &ended.describe());
     Ok(match ended {
         Ended::Exit(_) => 0,
-        Ended::Stall(_) => crate::error::VOID,
+        Ended::Stall(_) => crate::error::STALLED,
         Ended::Interrupted(signal, _) => 128 + signal,
-        Ended::Unavailable(..) => crate::error::UNAVAILABLE,
+        Ended::Unavailable(..) => crate::error::FAILED,
     })
 }
