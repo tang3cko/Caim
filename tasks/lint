@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+set -uo pipefail
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$ROOT" || exit 2
+
+failed=0
+check() {
+  local name="$1" status=0
+  shift
+  "$@" || status=$?
+  if (( status == 0 )); then
+    echo "[lint] $name PASS"
+  else
+    echo "[lint] $name FAIL exit=$status"
+    failed=1
+  fi
+}
+
+check fmt cargo fmt --check
+check clippy cargo clippy --locked --all-targets -- -D warnings
+check shellcheck shellcheck caim tests/launcher/launcher_test.sh tests/terminal/job_control_test.sh tasks/lint
+
+if (( failed )); then
+  echo "FAIL: lint, see the [lint] lines above"
+  exit 1
+fi
+echo "PASS: lint"

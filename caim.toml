@@ -1,0 +1,41 @@
+# "cargo": a run waiting on cargo's target/ lock prints nothing, which the stall guard would take for a hang.
+name = "caim"
+
+[tasks.fmt]
+description = "Format the Rust sources in place"
+group = "dev"
+run = ["cargo", "fmt"]
+
+[tasks.lint]
+description = "rustfmt check, clippy with warnings as errors, and shellcheck, as CI's Lint job"
+group = "check"
+concurrency = { group = "cargo", scope = "checkout" }
+run = ["tasks/lint"]
+
+[tasks.test]
+description = "The cargo tests"
+group = "check"
+concurrency = { group = "cargo", scope = "checkout" }
+run = "cargo test --locked -- $TASK_ARG_FILTER"
+
+[[tasks.test.args]]
+name = "filter"
+help = "run only the tests whose name holds this"
+default = ""
+
+[tasks.launcher]
+description = "The ./caim launcher end to end: its freshness checks, and list and run on a scratch project"
+group = "check"
+concurrency = { group = "cargo", scope = "checkout" }
+run = ["tests/launcher/launcher_test.sh"]
+
+[tasks.terminal]
+description = "Ctrl-Z and fg at a real terminal, through expect and an interactive bash"
+group = "check"
+run = ["tests/terminal/job_control_test.sh"]
+
+[tasks.check]
+description = "Everything CI checks: lint, test, launcher and terminal"
+group = "check"
+requires = ["lint", "test", "launcher", "terminal"]
+run = ["true"]

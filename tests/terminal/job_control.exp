@@ -1,0 +1,63 @@
+#!/usr/bin/expect -f
+set caim [lindex $argv 0]
+set project [lindex $argv 1]
+set go [lindex $argv 2]
+set only [lindex $argv 3]
+set timeout 60
+log_user 0
+
+proc fail {case text} {
+  puts "VERDICT FAIL $case: $text"
+  exit 1
+}
+
+proc shell {} {
+  global project spawn_id
+  spawn env PS1=prompt$\  CAIM_ROOT=$project bash --norc --noprofile -i
+  expect "prompt$ "
+}
+
+proc await {case pattern failure} {
+  expect {
+    -re $pattern {}
+    timeout { fail $case $failure }
+    eof { fail $case "the shell went away: $failure" }
+  }
+}
+
+if {$only ne "guarded"} {
+shell
+send "$caim ask\r"
+await unguarded {ready} "the task did not start"
+send "\x1a"
+await unguarded {Stopped} "caim did not stop with its task"
+send "fg\r"
+await unguarded {fg\r\n[^\r\n]*caim ask} "fg did not resume caim"
+send "yes\r"
+await unguarded {got yes} "the task did not read after fg"
+await unguarded {VERDICT PASS exit=0} "the run did not pass"
+puts "VERDICT PASS unguarded"
+close
+wait
+}
+
+if {$only ne "unguarded"} {
+shell
+send "$caim work\r"
+await guarded {working} "the task did not start"
+send "\x1a"
+await guarded {Stopped} "caim did not stop"
+send "ps -o stat= -p \$(cat $project/task.pid)\r"
+expect {
+  -re {\r\n(T)[^\r\n]*\r\n} {}
+  -re {\r\n([SRDUI])[^\r\n]*\r\n} { fail guarded "the task kept running while caim was stopped" }
+  timeout { fail guarded "no state for the task" }
+}
+send "fg\r"
+exec sh -c "echo go >> $go"
+await guarded {finished} "the task did not go on after fg"
+await guarded {VERDICT PASS exit=0} "the run did not pass"
+puts "VERDICT PASS guarded"
+close
+wait
+}
