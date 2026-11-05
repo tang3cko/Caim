@@ -2,6 +2,41 @@
 
 lockfile_version = 3
 
+[[tools."github:mozilla/cargo-vet"]]
+version = "0.10.3"
+backend = "github:mozilla/cargo-vet"
+specifiers = ["0.10.3"]
+
+[tools."github:mozilla/cargo-vet"."platforms.linux-x64"]
+checksum = "sha256:e83878b80913fbe43629c28768e14ab51f4e86a4ba8f9dd08cc25b8dbc503c19"
+checksum_source = "mise-versions"
+url = "https://github.com/mozilla/cargo-vet/releases/download/v0.10.3/cargo-vet-x86_64-unknown-linux-gnu.tar.xz"
+url_api = "https://api.github.com/repos/mozilla/cargo-vet/releases/assets/666781870"
+
+[tools."github:mozilla/cargo-vet"."platforms.linux-x64-musl"]
+checksum = "sha256:e83878b80913fbe43629c28768e14ab51f4e86a4ba8f9dd08cc25b8dbc503c19"
+checksum_source = "mise-versions"
+url = "https://github.com/mozilla/cargo-vet/releases/download/v0.10.3/cargo-vet-x86_64-unknown-linux-gnu.tar.xz"
+url_api = "https://api.github.com/repos/mozilla/cargo-vet/releases/assets/666781870"
+
+[tools."github:mozilla/cargo-vet"."platforms.macos-arm64"]
+checksum = "sha256:a83f7d6f48a069890743ba61f7637660c8577f263efd64fee47e673632f0e423"
+checksum_source = "mise-versions"
+url = "https://github.com/mozilla/cargo-vet/releases/download/v0.10.3/cargo-vet-aarch64-apple-darwin.tar.xz"
+url_api = "https://api.github.com/repos/mozilla/cargo-vet/releases/assets/666781830"
+
+[tools."github:mozilla/cargo-vet"."platforms.macos-x64"]
+checksum = "sha256:d06a5078c3f4c589211ce011dc9329a5849c8153a41b6624112e7318d93c0b6d"
+checksum_source = "mise-versions"
+url = "https://github.com/mozilla/cargo-vet/releases/download/v0.10.3/cargo-vet-x86_64-apple-darwin.tar.xz"
+url_api = "https://api.github.com/repos/mozilla/cargo-vet/releases/assets/666781829"
+
+[tools."github:mozilla/cargo-vet"."platforms.windows-x64"]
+checksum = "sha256:855fda4724dada8ba235aec7c0da7d3b28d1697c946627733143fe37444dd510"
+checksum_source = "mise-versions"
+url = "https://github.com/mozilla/cargo-vet/releases/download/v0.10.3/cargo-vet-x86_64-pc-windows-msvc.zip"
+url_api = "https://api.github.com/repos/mozilla/cargo-vet/releases/assets/666781828"
+
 [[tools.rust]]
 version = "1.99.1"
 backend = "core:rust"
