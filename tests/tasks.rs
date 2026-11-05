@@ -599,6 +599,168 @@ fn parallel_requirements_run_at_once_and_their_own_requirements_once() {
     assert!(output.contains("both: runs shell in parallel, but it has guard = false"), "{output}");
 }
 
+const BUILD: &str = "description = \"b\"\n[[args]]\nname = \"configuration\"\nhelp = \"h\"\ndefault = \"Release\"\n\
+    choices = [\"Debug\", \"Release\"]\n[[args]]\nname = \"clean\"\nhelp = \"h\"\nflag = true\n";
+const BUILD_RUN: &str = "echo \"build $CAIM_ARG_CONFIGURATION clean=$CAIM_ARG_CLEAN\" >> \"$ORDER\"";
+const PASSES: &str = "description = \"i\"\n\
+    requires = [{ task = \"build\", args = { configuration = { arg = \"configuration\" } } }]\n\
+    [[args]]\nname = \"configuration\"\nhelp = \"h\"\ndefault = \"Release\"\n";
+
+/// build, perfcheck requiring a Debug build, and install passing its own --configuration to build.
+fn building() -> Project {
+    let project = Project::new();
+    project.task("check", "build", BUILD, BUILD_RUN);
+    project.task(
+        "check",
+        "perfcheck",
+        "description = \"p\"\nrequires = [{ task = \"build\", args = { configuration = \"Debug\", clean = true } }]\n",
+        "echo perfcheck >> \"$ORDER\"",
+    );
+    project.task("check", "install", PASSES, "echo install >> \"$ORDER\"");
+    project
+}
+
+fn ordered(project: &Project, args: &[&str]) -> (i32, String, String) {
+    let scratch = TempDir::new();
+    let order = scratch.path("order");
+    let (status, output) = run(project.x(args).env("ORDER", &order));
+    (status, fs::read_to_string(&order).unwrap_or_default(), output)
+}
+
+#[test]
+fn requirements_take_fixed_arguments_and_the_requiring_tasks_own() {
+    let project = building();
+    let (status, order, output) = ordered(&project, &["perfcheck"]);
+    assert_eq!(status, 0, "{output}");
+    assert_eq!(order, "build Debug clean=1\nperfcheck\n");
+    let (status, order, output) = ordered(&project, &["install", "--configuration", "Debug"]);
+    assert_eq!(status, 0, "{output}");
+    assert_eq!(order, "build Debug clean=\ninstall\n");
+    let (status, order, output) = ordered(&project, &["install"]);
+    assert_eq!(status, 0, "{output}");
+    assert_eq!(order, "build Release clean=\ninstall\n");
+
+    let (status, order, output) = ordered(&project, &["install", "--configuration", "Fast"]);
+    assert_eq!(status, 64, "{output}");
+    assert_eq!(order, "", "a passed value is checked before anything runs");
+    assert!(output.contains("install: build --configuration must be one of Debug, Release, not \"Fast\""), "{output}");
+
+    let (_, help) = project.run(&["perfcheck", "--help"]);
+    assert!(help.contains("runs build --clean --configuration Debug first"), "{help}");
+    let (_, help) = project.run(&["install", "--help"]);
+    assert!(help.contains("runs build --configuration <configuration> first"), "{help}");
+}
+
+#[test]
+fn a_task_runs_once_for_each_set_of_arguments() {
+    let project = building();
+    let (status, order, output) = ordered(&project, &["build", "install"]);
+    assert_eq!(status, 0, "{output}");
+    assert_eq!(order, "build Release clean=\ninstall\n", "the same arguments run once");
+    let (status, order, output) = ordered(&project, &["build", "perfcheck"]);
+    assert_eq!(status, 0, "{output}");
+    assert_eq!(order, "build Release clean=\nbuild Debug clean=1\nperfcheck\n", "other arguments run again");
+    let (status, order, output) = ordered(&project, &["build", "--configuration", "Debug", "--clean", "perfcheck"]);
+    assert_eq!(status, 0, "{output}");
+    assert_eq!(order, "build Debug clean=1\nperfcheck\n");
+
+    let (status, stdout, _) = split(&mut project.x(&["--dry-run", "build", "perfcheck"]));
+    assert_eq!(status, 0, "{stdout}");
+    let names: Vec<&str> = stdout.lines().filter(|line| !line.starts_with(' ')).collect();
+    assert_eq!(names, ["build", "build", "perfcheck"], "{stdout}");
+    assert!(stdout.contains("  args: CAIM_ARG_CLEAN=\"1\" CAIM_ARG_CONFIGURATION=\"Debug\"\n"), "{stdout}");
+}
+
+#[test]
+fn parallel_requirements_get_their_arguments() {
+    let project = Project::new();
+    project.task("check", "build", BUILD, BUILD_RUN);
+    project.task("check", "lint", SIMPLE, "echo lint >> \"$ORDER\"");
+    project.task(
+        "check",
+        "fan",
+        "description = \"f\"\nparallel = true\n\
+         requires = [{ task = \"build\", args = { configuration = \"Debug\" } }, \"lint\"]\n",
+        "echo fan >> \"$ORDER\"",
+    );
+    let (status, order, output) = ordered(&project, &["fan"]);
+    assert_eq!(status, 0, "{output}");
+    let mut lines: Vec<&str> = order.lines().collect();
+    assert_eq!(lines.pop(), Some("fan"), "{order}");
+    lines.sort();
+    assert_eq!(lines, ["build Debug clean=", "lint"], "{order}");
+    assert!(output.contains("[build] exit=0") && output.contains("[lint] exit=0"), "{output}");
+}
+
+#[test]
+fn a_bad_requirement_is_setup() {
+    let flag_arg = "\n[[args]]\nname = \"fast\"\nhelp = \"h\"\nflag = true\n";
+    for (requirement, extra, expected) in [
+        ("{ task = \"build\", args = { nope = \"x\" } }", "", "top: requires build with unknown argument --nope"),
+        (
+            "{ task = \"build\", args = { configuration = \"Fast\" } }",
+            "",
+            "top: requires build with --configuration Fast, not one of Debug, Release",
+        ),
+        (
+            "{ task = \"build\", args = { clean = \"yes\" } }",
+            "",
+            "top: requires build with --clean, a flag: give true or false",
+        ),
+        (
+            "{ task = \"build\", args = { configuration = true } }",
+            "",
+            "top: requires build with --configuration, which takes a value, not true or false",
+        ),
+        (
+            "{ task = \"build\", args = { configuration = { arg = \"missing\" } } }",
+            "",
+            "top: passes --missing to build, but top has no such argument",
+        ),
+        (
+            "{ task = \"build\", args = { configuration = { arg = \"fast\" } } }",
+            flag_arg,
+            "top: passes --fast to build's --configuration; one is a flag and the other is not",
+        ),
+        ("{ task = \"build\", argz = {} }", "", "unknown field `argz`"),
+        ("{ task = \"nothing\" }", "", "top: requires unknown task nothing"),
+    ] {
+        let project = Project::new();
+        project.task("check", "build", BUILD, BUILD_RUN);
+        project.task("check", "top", &format!("description = \"t\"\nrequires = [{requirement}]\n{extra}"), "true");
+        let (status, output) = project.run(&["list"]);
+        assert_eq!(status, 78, "{requirement}: {output}");
+        assert!(output.contains(expected), "{requirement}: {output}");
+    }
+
+    let project = Project::new();
+    project.task(
+        "check",
+        "deploy",
+        "description = \"d\"\n[[args]]\nname = \"to\"\nhelp = \"h\"\nrequired = true\n",
+        "true",
+    );
+    project.task("check", "bare", "description = \"b\"\nrequires = [\"deploy\"]\n", "true");
+    let (status, output) = project.run(&["list"]);
+    assert_eq!(status, 78, "{output}");
+    assert!(output.contains("bare: requires deploy without its required --to"), "{output}");
+    let project = Project::new();
+    project.task(
+        "check",
+        "deploy",
+        "description = \"d\"\n[[args]]\nname = \"to\"\nhelp = \"h\"\nrequired = true\n",
+        "true",
+    );
+    project.task(
+        "check",
+        "given",
+        "description = \"g\"\nrequires = [{ task = \"deploy\", args = { to = \"staging\" } }]\n",
+        "true",
+    );
+    let (status, output) = project.run(&["given"]);
+    assert_eq!(status, 0, "a required argument can be given: {output}");
+}
+
 #[test]
 fn the_output_is_the_tasks_then_one_exit_line_each() {
     let project = Project::new();
