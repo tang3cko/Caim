@@ -48,7 +48,7 @@ jobs:
     name: Build (${{ matrix.platform }})
     needs: plan
     strategy:
-      fail-fast: true
+      fail-fast: false
       matrix:
         include:
           - target: aarch64-apple-darwin
