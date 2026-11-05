@@ -74,11 +74,11 @@ $ caim package --platform Win64
 ```
 caim list
 caim <task> --help
-caim <task> [--name value ...] [<task> [--name value ...] ...]
+caim [--dry-run] <task> [--name value ...] [<task> [--name value ...] ...]
 caim completions bash|zsh
 ```
 
-Caim finds the project by the nearest `caim.toml` at or above the current directory (`CAIM_ROOT` overrides it) and runs tasks at the project's root. Several tasks on one line run in order, as make runs several targets; the first that does not succeed ends the line. A task runs at most once per line, whether it was named or required. Every task's arguments are checked before anything runs.
+Caim finds the project by the nearest `caim.toml` at or above the current directory (`CAIM_ROOT` overrides it) and runs tasks at the project's root. Several tasks on one line run in order, as make runs several targets; the first that does not succeed ends the line. A task runs at most once per line, whether it was named or required. Every task's arguments are checked before anything runs. `--dry-run` runs nothing and prints, in the order they would run, each task with its command, directory, arguments, environment names, concurrency groups and hooks.
 
 A run's stdout is the task's stdout and stderr, then one line, `[<task>] exit=N`, with the reason in parentheses when the command did not simply exit. Caim's own messages go to stderr.
 

@@ -67,7 +67,7 @@ pub fn candidates(tasks: &BTreeMap<String, Task>, words: &[String]) -> Vec<Strin
             found.extend(task.declaration.args.iter().map(|arg| format!("--{}", arg.name)));
             found.push("--help".into());
         }
-        None if words.is_empty() => found.extend(["list", "--help"].map(String::from)),
+        None if words.is_empty() => found.extend(["list", "--help", "--dry-run"].map(String::from)),
         None => found.push("--help".into()),
     }
     found.extend(tasks.values().filter(|task| !task.declaration.hidden).map(|task| task.name.clone()));

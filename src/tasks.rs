@@ -317,16 +317,19 @@ pub fn parse_args(task: &Task, args: &[String]) -> std::result::Result<BTreeMap<
 struct Named<'t> {
     tasks: Vec<(&'t Task, Vec<String>)>,
     help: bool,
+    dry_run: bool,
 }
 
 fn name_tasks<'t>(tasks: &'t BTreeMap<String, Task>, args: &[String]) -> std::result::Result<Named<'t>, String> {
-    let mut named = Named { tasks: Vec::new(), help: false };
+    let mut named = Named { tasks: Vec::new(), help: false, dry_run: false };
     let mut i = 0;
     while i < args.len() {
         let text = &args[i];
         i += 1;
         match text.as_str() {
             "--help" | "-h" => named.help = true,
+            // After a task, --dry-run is that task's own option.
+            "--dry-run" if named.tasks.is_empty() => named.dry_run = true,
             _ if !text.starts_with('-') => match tasks.get(text) {
                 Some(task) => named.tasks.push((task, Vec::new())),
                 None => return Err(format!("unknown task {text:?}; caim list shows them")),
@@ -399,16 +402,100 @@ pub fn usage(task: &Task) -> String {
         facts.push("no stall guard".into());
     }
     for group in &task.declaration.concurrency {
-        let mode = match group.mode {
-            concurrency::Mode::Exclusive => "alone".to_string(),
-            concurrency::Mode::Shared => match group.limit {
-                Some(limit) => format!("shared, at most {limit} at once"),
-                None => "shared".into(),
-            },
-        };
-        facts.push(format!("holds {} ({mode}, per {})", group.group, group.scope.name()));
+        facts.push(format!("holds {}", holding(group)));
     }
     text + &format!("\n{}\n", facts.join("; "))
+}
+
+fn holding(group: &Concurrency) -> String {
+    let mode = match group.mode {
+        concurrency::Mode::Exclusive => "alone".to_string(),
+        concurrency::Mode::Shared => match group.limit {
+            Some(limit) => format!("shared, at most {limit} at once"),
+            None => "shared".into(),
+        },
+    };
+    format!("{} ({mode}, per {})", group.group, group.scope.name())
+}
+
+/// The tasks a line runs, in the order the runner would run them: each task's requirements first,
+/// with their defaults, and no task twice.
+fn plan<'t>(
+    tasks: &'t BTreeMap<String, Task>,
+    runs: &[(&'t Task, BTreeMap<String, String>)],
+) -> Vec<(&'t Task, BTreeMap<String, String>)> {
+    fn visit<'t>(
+        tasks: &'t BTreeMap<String, Task>,
+        task: &'t Task,
+        values: BTreeMap<String, String>,
+        done: &mut BTreeSet<String>,
+        order: &mut Vec<(&'t Task, BTreeMap<String, String>)>,
+    ) {
+        for required in &task.declaration.requires {
+            if !done.contains(required) {
+                let other = &tasks[required];
+                visit(tasks, other, parse_args(other, &[]).unwrap_or_default(), done, order);
+            }
+        }
+        done.insert(task.name.clone());
+        order.push((task, values));
+    }
+    let mut done = BTreeSet::new();
+    let mut order = Vec::new();
+    for (task, values) in runs {
+        if !done.contains(&task.name) {
+            visit(tasks, task, values.clone(), &mut done, &mut order);
+        }
+    }
+    order
+}
+
+fn shown_command(run: &Run) -> String {
+    match run {
+        Run::Shell(line) => format!("sh -c {line:?}"),
+        Run::Command(words) => {
+            words
+                .iter()
+                .map(|word| {
+                    if word.is_empty() || word.contains(char::is_whitespace) {
+                        format!("{word:?}")
+                    } else {
+                        word.clone()
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join(" ")
+        }
+    }
+}
+
+fn dry_run(order: &[(&Task, BTreeMap<String, String>)]) -> i32 {
+    for (task, values) in order {
+        let declaration = &task.declaration;
+        println!("{}", task.name);
+        println!("  run: {}", shown_command(&declaration.run));
+        println!("  dir: {}", declaration.dir.as_deref().unwrap_or("."));
+        if !values.is_empty() {
+            let shown: Vec<String> = values.iter().map(|(arg, value)| format!("{}={value:?}", env_name(arg))).collect();
+            println!("  args: {}", shown.join(" "));
+        }
+        if !declaration.env.is_empty() {
+            println!("  env: {}", declaration.env.keys().cloned().collect::<Vec<_>>().join(", "));
+        }
+        for group in &declaration.concurrency {
+            println!("  holds: {}", holding(group));
+        }
+        if let Some(lock) = &declaration.lock {
+            println!("  lock hook: {lock}");
+        }
+        if !declaration.after.is_empty() {
+            println!("  after hooks: {}", declaration.after.join(", "));
+        }
+        if !declaration.guard {
+            println!("  stall guard: off");
+        }
+    }
+    OK
 }
 
 fn list(tasks: &BTreeMap<String, Task>) -> i32 {
@@ -431,7 +518,7 @@ fn list(tasks: &BTreeMap<String, Task>) -> i32 {
 }
 
 fn general_usage() -> &'static str {
-    "usage: caim list | caim [--help] <task> [--name value ...] [<task> [--name value ...] ...]"
+    "usage: caim list | caim [--help] [--dry-run] <task> [--name value ...] [<task> [--name value ...] ...]"
 }
 
 pub const PROJECT_FILE: &str = "caim.toml";
@@ -534,6 +621,9 @@ pub fn main(args: &[String]) -> i32 {
                         return USAGE;
                     }
                 }
+            }
+            if named.dry_run {
+                return dry_run(&plan(&tasks, &runs));
             }
             let mut runner = Runner::new(root, project, hooks, &tasks);
             for (task, values) in runs {
