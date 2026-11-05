@@ -54,3 +54,13 @@ description = "Everything CI checks: lint, test, launcher and terminal"
 group = "check"
 requires = ["lint", "test", "launcher", "terminal"]
 run = ["true"]
+
+[tasks.release-notes]
+description = "The release notes for a tag, from its Conventional Commits"
+group = "release"
+run = ["tasks/release-notes"]
+
+[[tasks.release-notes.args]]
+name = "tag"
+help = "the version tag, such as v0.1.0"
+required = true

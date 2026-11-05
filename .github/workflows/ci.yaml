@@ -39,7 +39,7 @@ jobs:
         run: cargo clippy --locked --all-targets -- -D warnings
 
       - name: Shellcheck
-        run: shellcheck caim tests/launcher/launcher_test.sh tests/terminal/job_control_test.sh tasks/lint tasks/linux
+        run: shellcheck caim tests/launcher/launcher_test.sh tests/terminal/job_control_test.sh tasks/*
 
       - name: actionlint
         run: actionlint
