@@ -40,7 +40,7 @@ pub fn dispatch(args: &[String]) -> i32 {
 
 pub fn candidates(tasks: &BTreeMap<String, Task>, words: &[String]) -> Vec<String> {
     match words.first().map(String::as_str) {
-        Some("list") => return if words.len() == 1 { vec!["--json".into()] } else { Vec::new() },
+        Some("list") => return Vec::new(),
         Some(MODE) => return if words.len() == 1 { vec!["bash".into(), "zsh".into()] } else { Vec::new() },
         _ => {}
     }
@@ -67,7 +67,7 @@ pub fn candidates(tasks: &BTreeMap<String, Task>, words: &[String]) -> Vec<Strin
             found.extend(task.declaration.args.iter().map(|arg| format!("--{}", arg.name)));
             found.push("--help".into());
         }
-        None if words.is_empty() => found.extend(["list", "--json", "--help"].map(String::from)),
+        None if words.is_empty() => found.extend(["list", "--help"].map(String::from)),
         None => found.push("--help".into()),
     }
     found.extend(tasks.values().filter(|task| !task.declaration.hidden).map(|task| task.name.clone()));
