@@ -75,6 +75,8 @@ pub struct Declaration {
     pub dir: Option<String>,
     #[serde(default)]
     pub group: Option<String>,
+    #[serde(default)]
+    pub parallel: bool,
 }
 
 #[derive(Deserialize, Clone, Debug)]
@@ -248,6 +250,12 @@ pub fn discover(
             };
             if other.declaration.args.iter().any(|arg| arg.required) {
                 return Err(setup(format!("{}: requires {required}, which has a required argument", task.name)));
+            }
+            if task.declaration.parallel && !other.declaration.guard {
+                return Err(setup(format!(
+                    "{}: runs {required} in parallel, but it has guard = false and needs the terminal",
+                    task.name
+                )));
             }
         }
     }
@@ -493,6 +501,9 @@ fn dry_run(order: &[(&Task, BTreeMap<String, String>)]) -> i32 {
         }
         if !declaration.guard {
             println!("  stall guard: off");
+        }
+        if declaration.parallel && !declaration.requires.is_empty() {
+            println!("  runs its requirements in parallel: {}", declaration.requires.join(", "));
         }
     }
     OK
@@ -765,6 +776,33 @@ impl Drop for Channel {
     }
 }
 
+/// The tasks a parallel run has already run, for the caims it starts for the rest.
+const DONE: &str = "CAIM_DONE";
+
+/// Copies a child caim's output line by line with its task's name in front, so the lines of tasks
+/// running together stay apart; the child's own "[task] exit=N" line already carries the name.
+fn prefixed(pipe: impl io::Read + Send + 'static, prefix: String, to_stderr: bool) -> std::thread::JoinHandle<()> {
+    std::thread::spawn(move || {
+        let mut reader = io::BufReader::new(pipe);
+        let mut line = Vec::new();
+        loop {
+            line.clear();
+            match io::BufRead::read_until(&mut reader, b'\n', &mut line) {
+                Ok(0) | Err(_) => return,
+                Ok(_) => {}
+            }
+            let text = String::from_utf8_lossy(&line);
+            let text = text.trim_end_matches('\n');
+            let shown = if text.starts_with(&prefix) { format!("{text}\n") } else { format!("{prefix}{text}\n") };
+            let _ = if to_stderr {
+                io::stderr().lock().write_all(shown.as_bytes())
+            } else {
+                io::stdout().lock().write_all(shown.as_bytes())
+            };
+        }
+    })
+}
+
 fn ps(pid: i32, field: &str) -> Option<String> {
     let output = Command::new("ps")
         .args(["-p", &pid.to_string(), "-o", &format!("{field}=")])
@@ -792,7 +830,77 @@ impl<'a> Runner<'a> {
         let held = std::env::var(concurrency::HELD)
             .map(|text| text.lines().filter(|line| !line.is_empty()).map(String::from).collect())
             .unwrap_or_default();
-        Runner { root, project, hooks, tasks, done: BTreeSet::new(), out: RefCell::new(Out { ended_line: true }), held }
+        let done = std::env::var(DONE)
+            .map(|text| text.lines().filter(|line| !line.is_empty()).map(String::from).collect())
+            .unwrap_or_default();
+        // Only this runner skips them: a caim that one of its tasks starts runs its own line.
+        unsafe { std::env::remove_var(DONE) };
+        Runner { root, project, hooks, tasks, done, out: RefCell::new(Out { ended_line: true }), held }
+    }
+
+    /// The tasks a parallel task requires, each run by a caim of its own with its output's lines
+    /// prefixed by its name. What those tasks require in turn runs here first, once.
+    fn run_parallel(&mut self, task: &Task) -> std::result::Result<(), (String, i32)> {
+        let pending: Vec<&Task> = task
+            .declaration
+            .requires
+            .iter()
+            .filter(|required| !self.done.contains(*required))
+            .map(|required| &self.tasks[required])
+            .collect();
+        let direct: BTreeSet<&str> = pending.iter().map(|other| other.name.as_str()).collect();
+        for other in &pending {
+            for deeper in &other.declaration.requires {
+                if direct.contains(deeper.as_str()) || self.done.contains(deeper) {
+                    continue;
+                }
+                let required = &self.tasks[deeper];
+                let status = self.run(required, &parse_args(required, &[]).unwrap_or_default());
+                if status != OK {
+                    return Err((other.name.clone(), status));
+                }
+            }
+        }
+        let executable = std::env::current_exe().map_err(|_| (task.name.clone(), FAILED))?;
+        let done: Vec<String> = self.done.iter().cloned().collect();
+        let mut running = Vec::new();
+        for other in &pending {
+            let child = Command::new(&executable)
+                .arg(&other.name)
+                .env("CAIM_ROOT", &self.root)
+                .env(DONE, done.join("\n"))
+                .stdin(Stdio::null())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .spawn();
+            let mut child = match child {
+                Ok(child) => child,
+                Err(error) => {
+                    self.out.borrow().message(&format!("{} did not start; {error}", other.name));
+                    return Err((other.name.clone(), FAILED));
+                }
+            };
+            let prefix = format!("[{}] ", other.name);
+            let stdout = child.stdout.take().map(|pipe| prefixed(pipe, prefix.clone(), false));
+            let stderr = child.stderr.take().map(|pipe| prefixed(pipe, prefix, true));
+            running.push((other.name.clone(), child, stdout, stderr));
+        }
+        let mut failed = None;
+        for (name, mut child, stdout, stderr) in running {
+            let status = child.wait().map_or(FAILED, |status| {
+                status
+                    .code()
+                    .unwrap_or_else(|| 128 + std::os::unix::process::ExitStatusExt::signal(&status).unwrap_or(0))
+            });
+            for reader in [stdout, stderr].into_iter().flatten() {
+                let _ = reader.join();
+            }
+            self.done.insert(name.clone());
+            if status != OK && failed.is_none() {
+                failed = Some((name, status));
+            }
+        }
+        failed.map_or(Ok(()), Err)
     }
 
     fn set_held(&self) {
@@ -834,6 +942,12 @@ impl<'a> Runner<'a> {
 
     fn run(&mut self, task: &Task, values: &BTreeMap<String, String>) -> i32 {
         let name = &task.name;
+        if task.declaration.parallel
+            && let Err((required, status)) = self.run_parallel(task)
+        {
+            self.out.borrow().ended(name, status, &Reason::Required(required));
+            return status;
+        }
         for required in &task.declaration.requires {
             if self.done.contains(required) {
                 continue;

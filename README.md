@@ -94,6 +94,7 @@ A task needs only `run`: a string goes through `sh -c`, a list is the command an
 | `description` | One line for `list` and `--help` | none |
 | `group` | The heading `list` shows the task under | none |
 | `requires` | Tasks run first, each to success, with their defaults | none |
+| `parallel` | Runs the tasks in `requires` at once, each output line prefixed with its task's name; they need the stall guard, and what they require runs first, once | `false` |
 | `args` | Arguments: `name`, `help`, and `choices`, `default`, `required` or `flag`; the command sees them as `CAIM_ARG_<NAME>` | none |
 | `guard` | Whether the stall guard watches the run; `false` gives the command the terminal | `true` |
 | `idle` | Seconds without progress before the run is stopped | `CAIM_STALL_SECONDS`, else 180 |
