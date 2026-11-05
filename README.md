@@ -197,7 +197,7 @@ macOS, and Linux 5.3 or later. Built from source, Linux needs glibc 2.29 or late
 
 ## Development
 
-This repository is a caim project: `./caim` builds caim from these sources when they change, then runs it. [mise](https://mise.jdx.dev) supplies the pinned Rust and shellcheck; the tests also need `expect`, `zsh`, `perl` and `shasum`, which macOS has and Debian and Ubuntu install with `apt-get install expect zsh`, and `./caim linux` needs [Apple container](https://github.com/apple/container).
+This repository is a caim project: `./caim` builds caim from these sources when they change, then runs it. [mise](https://mise.jdx.dev) supplies the pinned Rust, shellcheck and actionlint; the tests also need `expect`, `zsh`, `perl` and `shasum`, which macOS has and Debian and Ubuntu install with `apt-get install expect zsh`, and `./caim linux` needs [Apple container](https://github.com/apple/container).
 
 ```bash
 mise install
