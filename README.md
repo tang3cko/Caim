@@ -17,7 +17,7 @@ Long builds, imports and test runs sometimes hang. A timeout either kills a run 
 
 ## Install
 
-Download a release archive for your platform from [Releases](../../releases) (`caim-vX.Y.Z-<target>.tar.gz`, with `SHA256SUMS` and build provenance attestations), or install it with [mise](https://mise.jdx.dev):
+Download a release archive for your platform from [Releases](../../releases) (`caim-vX.Y.Z-<os>-<cpu>.tar.gz`, such as `macos-arm64` or `linux-x64`, with `SHA256SUMS` and build provenance attestations), or install it with [mise](https://mise.jdx.dev):
 
 ```bash
 mise use -g github:tang3cko/Caim
