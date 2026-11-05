@@ -13,12 +13,17 @@ fingerprint() {
 current() { [[ -x "$BINARY" && -f "$STAMP" && "$(cat "$STAMP")" == "$(fingerprint)" ]]; }
 
 build() {
-  local sources log=$TARGET/build.log cargo=(cargo)
+  local sources log=$TARGET/build.log cargo=(cargo) rust
   sources="$(fingerprint)"
   mkdir -p "$TARGET"
-  # mise supplies the toolchain pinned in this repository's mise.toml, and only that tool; offline, so
-  # neither it nor cargo reaches the network.
-  if command -v mise > /dev/null; then cargo=(env MISE_OFFLINE=1 mise exec -C "$HOME_DIR" rust -- cargo); fi
+  rust="$(sed -n 's/^rust = .*version = "\([^"]*\)".*/\1/p' "$HOME_DIR/mise.toml")"
+  # rustup itself selects the Rust pinned in mise.toml, offline. mise exec checks the install first,
+  # and on the macOS runner it judged the installed toolchain missing and went to reinstall it.
+  if [[ -n "$rust" ]] && command -v rustup > /dev/null; then
+    cargo=(env RUSTUP_TOOLCHAIN="$rust" RUSTUP_AUTO_INSTALL=0 cargo)
+  elif command -v mise > /dev/null; then
+    cargo=(env MISE_OFFLINE=1 mise exec -C "$HOME_DIR" rust -- cargo)
+  fi
   if ! CARGO_TARGET_DIR="$TARGET" "${cargo[@]}" build --offline --release --quiet \
       --manifest-path "$HOME_DIR/Cargo.toml" > "$log" 2>&1; then
     cat "$log" >&2
