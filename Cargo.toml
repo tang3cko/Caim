@@ -2,7 +2,7 @@
 name = "caim"
 version = "0.1.0"
 edition = "2024"
-rust-version = "1.85"
+rust-version = "1.99.1"
 description = "A task runner and process supervisor that judges a stalled run by the progress it declared"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/tang3cko/Caim"

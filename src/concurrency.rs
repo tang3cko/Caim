@@ -393,10 +393,10 @@ impl Group {
                 continue;
             }
             let mut text = String::new();
-            if file.read_to_string(&mut text).is_ok() {
-                if let Some(holder) = Holder::parse(&text) {
-                    found.push(holder);
-                }
+            if file.read_to_string(&mut text).is_ok()
+                && let Some(holder) = Holder::parse(&text)
+            {
+                found.push(holder);
             }
         }
         found.sort_by_key(|holder| holder.pid);
