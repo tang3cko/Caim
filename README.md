@@ -208,7 +208,7 @@ cargo fetch --locked          # the crates, once: ./caim builds offline
 ./caim linux --task test      # a task on Linux, in an Apple container
 ```
 
-`./caim --build` only brings the binary up to date, and `./caim --check` exits 1 when it is stale. A release is made by raising `version` in `Cargo.toml` on main.
+`./caim --build` only brings the binary up to date, and `./caim --check` exits 1 when it is stale. A release is made by pushing a tag `vX.Y.Z` on main that matches `version` in `Cargo.toml`.
 
 ## License
 
