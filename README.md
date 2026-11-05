@@ -23,7 +23,7 @@ Download a release archive for your platform from [Releases](../../releases) (`c
 mise use -g github:tang3cko/Caim
 ```
 
-To build from source, with Rust 1.85 or later:
+To build from source:
 
 ```bash
 cargo install --locked --git https://github.com/tang3cko/Caim
@@ -193,11 +193,11 @@ caim stop --group G --step TERM:20 --step KILL:20
 
 ## Platforms
 
-macOS, and Linux 5.3 or later. Built from source, Linux needs glibc 2.29 or later; the released Linux binaries need glibc 2.43. Everything that depends on the operating system is in `src/native/`, one file per platform.
+macOS and Linux. Everything that depends on the operating system is in `src/native/`, one file per platform.
 
 ## Development
 
-This repository is a caim project: `./caim` builds caim from these sources when they change, then runs it. [mise](https://mise.jdx.dev) supplies the pinned Rust, shellcheck and actionlint; the tests also need `expect`, `zsh`, `perl` and `shasum`, which macOS has and Debian and Ubuntu install with `apt-get install expect zsh`, and `./caim linux` needs [Apple container](https://github.com/apple/container).
+This repository is a caim project: `./caim` builds caim from these sources when they change, then runs it. [mise](https://mise.jdx.dev) supplies the tools pinned in `mise.toml`; the tests also need `expect`, `zsh`, `perl` and `shasum`, which macOS has and Debian and Ubuntu install with `apt-get install expect zsh`, and `./caim linux` needs [Apple container](https://github.com/apple/container).
 
 ```bash
 mise install
