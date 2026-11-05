@@ -80,10 +80,29 @@ jobs:
       - name: Terminal job control tests
         run: bash tests/terminal/job_control_test.sh
 
+  # Every crate in Cargo.lock needs an audit, an imported audit or an exemption in supply-chain/.
+  vet:
+    name: Vet
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up mise
+        uses: jdx/mise-action@6612f0ef07ed2a736cd1e00a94a065522dd41195 # v5.2.5
+
+      - name: cargo vet
+        run: cargo vet --locked
+
   ci-result:
     name: CI Result
     if: always()
-    needs: [lint, test]
+    needs: [lint, test, vet]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions: {}
