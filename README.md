@@ -191,6 +191,10 @@ caim stop --group G --step TERM:20 --step KILL:20
 
 `caim hash` reads NUL-separated paths on stdin and prints `shasum -a 256` lines for them. `caim hash-check LIST...` hashes the files those lists name and prints `<list>\t<file>` for every one that changed or is missing; it exits 0 when none did, 1 when some did, and 125 when a list cannot be read.
 
+## Compatibility
+
+Versions follow [Semantic Versioning](https://semver.org). What scripts and tools read is the public interface: the `caim.toml` keys and what they mean, the commands and options, the exit statuses, the `[<task>] exit=N` line, the `CAIM_` environment variables, the waiting modes' arguments and statuses, and the `hash` and `hash-check` formats. From 1.0, changing or removing any of these takes a major version; adding to them takes a minor one. Messages on stderr and the `--dry-run` listing are for people and may change in any release. Before 1.0, a minor version may break the interface, and its release notes say how.
+
 ## Platforms
 
 macOS and Linux. Everything that depends on the operating system is in `src/native/`, one file per platform.
