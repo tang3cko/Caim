@@ -75,6 +75,8 @@ pub struct Declaration {
     pub dir: Option<String>,
     #[serde(default)]
     pub group: Option<String>,
+    #[serde(default)]
+    pub parallel: bool,
 }
 
 #[derive(Deserialize, Clone, Debug)]
@@ -249,6 +251,12 @@ pub fn discover(
             if other.declaration.args.iter().any(|arg| arg.required) {
                 return Err(setup(format!("{}: requires {required}, which has a required argument", task.name)));
             }
+            if task.declaration.parallel && !other.declaration.guard {
+                return Err(setup(format!(
+                    "{}: runs {required} in parallel, but it has guard = false and needs the terminal",
+                    task.name
+                )));
+            }
         }
     }
     fn visit(name: &str, tasks: &BTreeMap<String, Task>, path: &mut Vec<String>) -> Result<()> {
@@ -317,16 +325,19 @@ pub fn parse_args(task: &Task, args: &[String]) -> std::result::Result<BTreeMap<
 struct Named<'t> {
     tasks: Vec<(&'t Task, Vec<String>)>,
     help: bool,
+    dry_run: bool,
 }
 
 fn name_tasks<'t>(tasks: &'t BTreeMap<String, Task>, args: &[String]) -> std::result::Result<Named<'t>, String> {
-    let mut named = Named { tasks: Vec::new(), help: false };
+    let mut named = Named { tasks: Vec::new(), help: false, dry_run: false };
     let mut i = 0;
     while i < args.len() {
         let text = &args[i];
         i += 1;
         match text.as_str() {
             "--help" | "-h" => named.help = true,
+            // After a task, --dry-run is that task's own option.
+            "--dry-run" if named.tasks.is_empty() => named.dry_run = true,
             _ if !text.starts_with('-') => match tasks.get(text) {
                 Some(task) => named.tasks.push((task, Vec::new())),
                 None => return Err(format!("unknown task {text:?}; caim list shows them")),
@@ -399,16 +410,103 @@ pub fn usage(task: &Task) -> String {
         facts.push("no stall guard".into());
     }
     for group in &task.declaration.concurrency {
-        let mode = match group.mode {
-            concurrency::Mode::Exclusive => "alone".to_string(),
-            concurrency::Mode::Shared => match group.limit {
-                Some(limit) => format!("shared, at most {limit} at once"),
-                None => "shared".into(),
-            },
-        };
-        facts.push(format!("holds {} ({mode}, per {})", group.group, group.scope.name()));
+        facts.push(format!("holds {}", holding(group)));
     }
     text + &format!("\n{}\n", facts.join("; "))
+}
+
+fn holding(group: &Concurrency) -> String {
+    let mode = match group.mode {
+        concurrency::Mode::Exclusive => "alone".to_string(),
+        concurrency::Mode::Shared => match group.limit {
+            Some(limit) => format!("shared, at most {limit} at once"),
+            None => "shared".into(),
+        },
+    };
+    format!("{} ({mode}, per {})", group.group, group.scope.name())
+}
+
+/// The tasks a line runs, in the order the runner would run them: each task's requirements first,
+/// with their defaults, and no task twice.
+fn plan<'t>(
+    tasks: &'t BTreeMap<String, Task>,
+    runs: &[(&'t Task, BTreeMap<String, String>)],
+) -> Vec<(&'t Task, BTreeMap<String, String>)> {
+    fn visit<'t>(
+        tasks: &'t BTreeMap<String, Task>,
+        task: &'t Task,
+        values: BTreeMap<String, String>,
+        done: &mut BTreeSet<String>,
+        order: &mut Vec<(&'t Task, BTreeMap<String, String>)>,
+    ) {
+        for required in &task.declaration.requires {
+            if !done.contains(required) {
+                let other = &tasks[required];
+                visit(tasks, other, parse_args(other, &[]).unwrap_or_default(), done, order);
+            }
+        }
+        done.insert(task.name.clone());
+        order.push((task, values));
+    }
+    let mut done = BTreeSet::new();
+    let mut order = Vec::new();
+    for (task, values) in runs {
+        if !done.contains(&task.name) {
+            visit(tasks, task, values.clone(), &mut done, &mut order);
+        }
+    }
+    order
+}
+
+fn shown_command(run: &Run) -> String {
+    match run {
+        Run::Shell(line) => format!("sh -c {line:?}"),
+        Run::Command(words) => {
+            words
+                .iter()
+                .map(|word| {
+                    if word.is_empty() || word.contains(char::is_whitespace) {
+                        format!("{word:?}")
+                    } else {
+                        word.clone()
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join(" ")
+        }
+    }
+}
+
+fn dry_run(order: &[(&Task, BTreeMap<String, String>)]) -> i32 {
+    for (task, values) in order {
+        let declaration = &task.declaration;
+        println!("{}", task.name);
+        println!("  run: {}", shown_command(&declaration.run));
+        println!("  dir: {}", declaration.dir.as_deref().unwrap_or("."));
+        if !values.is_empty() {
+            let shown: Vec<String> = values.iter().map(|(arg, value)| format!("{}={value:?}", env_name(arg))).collect();
+            println!("  args: {}", shown.join(" "));
+        }
+        if !declaration.env.is_empty() {
+            println!("  env: {}", declaration.env.keys().cloned().collect::<Vec<_>>().join(", "));
+        }
+        for group in &declaration.concurrency {
+            println!("  holds: {}", holding(group));
+        }
+        if let Some(lock) = &declaration.lock {
+            println!("  lock hook: {lock}");
+        }
+        if !declaration.after.is_empty() {
+            println!("  after hooks: {}", declaration.after.join(", "));
+        }
+        if !declaration.guard {
+            println!("  stall guard: off");
+        }
+        if declaration.parallel && !declaration.requires.is_empty() {
+            println!("  runs its requirements in parallel: {}", declaration.requires.join(", "));
+        }
+    }
+    OK
 }
 
 fn list(tasks: &BTreeMap<String, Task>) -> i32 {
@@ -431,7 +529,7 @@ fn list(tasks: &BTreeMap<String, Task>) -> i32 {
 }
 
 fn general_usage() -> &'static str {
-    "usage: caim list | caim [--help] <task> [--name value ...] [<task> [--name value ...] ...]"
+    "usage: caim list | caim [--help] [--dry-run] <task> [--name value ...] [<task> [--name value ...] ...]"
 }
 
 pub const PROJECT_FILE: &str = "caim.toml";
@@ -534,6 +632,9 @@ pub fn main(args: &[String]) -> i32 {
                         return USAGE;
                     }
                 }
+            }
+            if named.dry_run {
+                return dry_run(&plan(&tasks, &runs));
             }
             let mut runner = Runner::new(root, project, hooks, &tasks);
             for (task, values) in runs {
@@ -675,6 +776,33 @@ impl Drop for Channel {
     }
 }
 
+/// The tasks a parallel run has already run, for the caims it starts for the rest.
+const DONE: &str = "CAIM_DONE";
+
+/// Copies a child caim's output line by line with its task's name in front, so the lines of tasks
+/// running together stay apart; the child's own "[task] exit=N" line already carries the name.
+fn prefixed(pipe: impl io::Read + Send + 'static, prefix: String, to_stderr: bool) -> std::thread::JoinHandle<()> {
+    std::thread::spawn(move || {
+        let mut reader = io::BufReader::new(pipe);
+        let mut line = Vec::new();
+        loop {
+            line.clear();
+            match io::BufRead::read_until(&mut reader, b'\n', &mut line) {
+                Ok(0) | Err(_) => return,
+                Ok(_) => {}
+            }
+            let text = String::from_utf8_lossy(&line);
+            let text = text.trim_end_matches('\n');
+            let shown = if text.starts_with(&prefix) { format!("{text}\n") } else { format!("{prefix}{text}\n") };
+            let _ = if to_stderr {
+                io::stderr().lock().write_all(shown.as_bytes())
+            } else {
+                io::stdout().lock().write_all(shown.as_bytes())
+            };
+        }
+    })
+}
+
 fn ps(pid: i32, field: &str) -> Option<String> {
     let output = Command::new("ps")
         .args(["-p", &pid.to_string(), "-o", &format!("{field}=")])
@@ -702,7 +830,77 @@ impl<'a> Runner<'a> {
         let held = std::env::var(concurrency::HELD)
             .map(|text| text.lines().filter(|line| !line.is_empty()).map(String::from).collect())
             .unwrap_or_default();
-        Runner { root, project, hooks, tasks, done: BTreeSet::new(), out: RefCell::new(Out { ended_line: true }), held }
+        let done = std::env::var(DONE)
+            .map(|text| text.lines().filter(|line| !line.is_empty()).map(String::from).collect())
+            .unwrap_or_default();
+        // Only this runner skips them: a caim that one of its tasks starts runs its own line.
+        unsafe { std::env::remove_var(DONE) };
+        Runner { root, project, hooks, tasks, done, out: RefCell::new(Out { ended_line: true }), held }
+    }
+
+    /// The tasks a parallel task requires, each run by a caim of its own with its output's lines
+    /// prefixed by its name. What those tasks require in turn runs here first, once.
+    fn run_parallel(&mut self, task: &Task) -> std::result::Result<(), (String, i32)> {
+        let pending: Vec<&Task> = task
+            .declaration
+            .requires
+            .iter()
+            .filter(|required| !self.done.contains(*required))
+            .map(|required| &self.tasks[required])
+            .collect();
+        let direct: BTreeSet<&str> = pending.iter().map(|other| other.name.as_str()).collect();
+        for other in &pending {
+            for deeper in &other.declaration.requires {
+                if direct.contains(deeper.as_str()) || self.done.contains(deeper) {
+                    continue;
+                }
+                let required = &self.tasks[deeper];
+                let status = self.run(required, &parse_args(required, &[]).unwrap_or_default());
+                if status != OK {
+                    return Err((other.name.clone(), status));
+                }
+            }
+        }
+        let executable = std::env::current_exe().map_err(|_| (task.name.clone(), FAILED))?;
+        let done: Vec<String> = self.done.iter().cloned().collect();
+        let mut running = Vec::new();
+        for other in &pending {
+            let child = Command::new(&executable)
+                .arg(&other.name)
+                .env("CAIM_ROOT", &self.root)
+                .env(DONE, done.join("\n"))
+                .stdin(Stdio::null())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .spawn();
+            let mut child = match child {
+                Ok(child) => child,
+                Err(error) => {
+                    self.out.borrow().message(&format!("{} did not start; {error}", other.name));
+                    return Err((other.name.clone(), FAILED));
+                }
+            };
+            let prefix = format!("[{}] ", other.name);
+            let stdout = child.stdout.take().map(|pipe| prefixed(pipe, prefix.clone(), false));
+            let stderr = child.stderr.take().map(|pipe| prefixed(pipe, prefix, true));
+            running.push((other.name.clone(), child, stdout, stderr));
+        }
+        let mut failed = None;
+        for (name, mut child, stdout, stderr) in running {
+            let status = child.wait().map_or(FAILED, |status| {
+                status
+                    .code()
+                    .unwrap_or_else(|| 128 + std::os::unix::process::ExitStatusExt::signal(&status).unwrap_or(0))
+            });
+            for reader in [stdout, stderr].into_iter().flatten() {
+                let _ = reader.join();
+            }
+            self.done.insert(name.clone());
+            if status != OK && failed.is_none() {
+                failed = Some((name, status));
+            }
+        }
+        failed.map_or(Ok(()), Err)
     }
 
     fn set_held(&self) {
@@ -744,6 +942,12 @@ impl<'a> Runner<'a> {
 
     fn run(&mut self, task: &Task, values: &BTreeMap<String, String>) -> i32 {
         let name = &task.name;
+        if task.declaration.parallel
+            && let Err((required, status)) = self.run_parallel(task)
+        {
+            self.out.borrow().ended(name, status, &Reason::Required(required));
+            return status;
+        }
         for required in &task.declaration.requires {
             if self.done.contains(required) {
                 continue;

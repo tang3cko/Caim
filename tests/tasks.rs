@@ -528,6 +528,78 @@ fn a_reader_that_leaves_early_does_not_end_the_supervision() {
 }
 
 #[test]
+fn dry_run_shows_the_plan_and_runs_nothing() {
+    let project = Project::new();
+    project.task("check", "base", "description = \"b\"\nconcurrency = \"editor\"\n", "touch \"$MARK\"");
+    project.task(
+        "check",
+        "top",
+        "description = \"t\"\nrequires = [\"base\"]\n[[args]]\nname = \"n\"\nhelp = \"h\"\ndefault = \"1\"\n",
+        "touch \"$MARK\"",
+    );
+    let scratch = TempDir::new();
+    let mark = scratch.path("ran");
+    let (status, stdout, stderr) = split(project.x(&["--dry-run", "top", "--n", "2", "base"]).env("MARK", &mark));
+    assert_eq!(status, 0, "{stdout}{stderr}");
+    assert!(!mark.exists(), "a dry run ran a task");
+    let names: Vec<&str> = stdout.lines().filter(|line| !line.starts_with(' ')).collect();
+    assert_eq!(names, ["base", "top"], "requirements first, and no task twice: {stdout}");
+    assert!(stdout.contains("  run: scripts/top\n"), "{stdout}");
+    assert!(stdout.contains("  args: CAIM_ARG_N=\"2\"\n"), "{stdout}");
+    assert!(stdout.contains("  holds: editor (alone, per project)\n"), "{stdout}");
+    assert_eq!(project.run(&["--dry-run", "top", "--bogus"]).0, 64, "arguments are still checked");
+    assert_eq!(project.run(&["top", "--dry-run"]).0, 64, "after a task, --dry-run is the task's own option");
+}
+
+#[test]
+fn parallel_requirements_run_at_once_and_their_own_requirements_once() {
+    let project = Project::new();
+    let scratch = TempDir::new();
+    let go = scratch.path("go");
+    let count = scratch.path("count");
+    project.task("check", "base", SIMPLE, "echo base >> \"$COUNT\"");
+    // waiter finishes only once writer has written: run one after the other, it would wait out its guard.
+    project.task(
+        "check",
+        "waiter",
+        "description = \"w\"\nrequires = [\"base\"]\n",
+        "\"$CAIM\" written \"$GO\" 30 > /dev/null && echo waited",
+    );
+    project.task("check", "writer", "description = \"w\"\nrequires = [\"base\"]\n", "echo go > \"$GO\"; echo wrote");
+    project.task(
+        "check",
+        "top",
+        "description = \"t\"\nrequires = [\"waiter\", \"writer\"]\nparallel = true\n",
+        "echo top",
+    );
+    fs::write(&go, "").unwrap();
+    let (status, stdout, stderr) = split(project.x(&["top"]).env("GO", &go).env("COUNT", &count));
+    assert_eq!(status, 0, "{stdout}{stderr}");
+    assert_eq!(fs::read_to_string(&count).unwrap(), "base\n", "a shared requirement runs once");
+    assert!(stdout.contains("[waiter] waited\n"), "{stdout}");
+    assert!(stdout.contains("[writer] wrote\n"), "{stdout}");
+    assert!(stdout.contains("[waiter] exit=0\n") && !stdout.contains("[waiter] [waiter]"), "{stdout}");
+    assert!(stdout.ends_with("top\n[top] exit=0\n"), "{stdout}");
+
+    project.task("check", "failing", SIMPLE, "exit 3");
+    project.task(
+        "check",
+        "fan",
+        "description = \"f\"\nrequires = [\"failing\", \"writer\"]\nparallel = true\n",
+        "echo fan",
+    );
+    let (status, stdout, _) = split(project.x(&["fan"]).env("GO", &go).env("COUNT", &count));
+    assert_eq!(status, 3, "{stdout}");
+    assert_eq!(last_line(&stdout), "[fan] exit=3 (required task failing did not pass)", "{stdout}");
+
+    project.task("check", "shell", "description = \"s\"\nguard = false\n", "true");
+    project.task("check", "both", "description = \"b\"\nrequires = [\"shell\"]\nparallel = true\n", "true");
+    let (status, output) = project.run(&["list"]);
+    assert_eq!(status, 78, "{output}");
+    assert!(output.contains("both: runs shell in parallel, but it has guard = false"), "{output}");
+}
+
+#[test]
 fn the_output_is_the_tasks_then_one_exit_line_each() {
     let project = Project::new();
     project.task("check", "base", SIMPLE, "echo 'from base'");
@@ -1122,7 +1194,7 @@ fn completion_words_follow_the_command_line() {
         assert_eq!(status, 0, "{output}");
         output.lines().map(String::from).collect()
     };
-    assert_eq!(words(&[]), ["list", "--help", "build", "package"]);
+    assert_eq!(words(&[]), ["list", "--help", "--dry-run", "build", "package"]);
     assert_eq!(words(&["package"]), ["--platform", "--fast", "--help", "build", "package"]);
     assert_eq!(words(&["package", "--platform"]), ["Mac", "Win64"]);
     assert_eq!(words(&["package", "--fast"]), ["--platform", "--fast", "--help", "build", "package"]);
