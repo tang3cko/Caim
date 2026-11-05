@@ -1,8 +1,8 @@
 use crate::error::{Error, Result};
 use crate::native::{Interest, Queue};
 use crate::sha256::Sha256;
+use serde::Deserialize;
 use serde::de::{self, Deserializer, MapAccess, SeqAccess, Visitor};
-use serde::{Deserialize, Serialize};
 use std::fs::{self, File};
 use std::io::{Read, Write};
 use std::os::fd::AsRawFd;
@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 
 pub const HELD: &str = "CAIM_HELD";
 
-#[derive(Deserialize, Serialize, Clone, Copy, Debug, PartialEq, Eq, Default)]
+#[derive(Deserialize, Clone, Copy, Debug, PartialEq, Eq, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum Scope {
     #[default]
@@ -20,7 +20,17 @@ pub enum Scope {
     Machine,
 }
 
-#[derive(Deserialize, Serialize, Clone, Copy, Debug, PartialEq, Eq, Default)]
+impl Scope {
+    pub fn name(self) -> &'static str {
+        match self {
+            Scope::Project => "project",
+            Scope::Checkout => "checkout",
+            Scope::Machine => "machine",
+        }
+    }
+}
+
+#[derive(Deserialize, Clone, Copy, Debug, PartialEq, Eq, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum Mode {
     #[default]
@@ -28,7 +38,7 @@ pub enum Mode {
     Shared,
 }
 
-#[derive(Deserialize, Serialize, Clone, Copy, Debug, PartialEq, Eq, Default)]
+#[derive(Deserialize, Clone, Copy, Debug, PartialEq, Eq, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum OnBusy {
     #[default]
@@ -36,7 +46,7 @@ pub enum OnBusy {
     Refuse,
 }
 
-#[derive(Deserialize, Serialize, Clone, Debug)]
+#[derive(Deserialize, Clone, Debug)]
 #[serde(deny_unknown_fields)]
 pub struct Concurrency {
     pub group: String,
@@ -44,7 +54,7 @@ pub struct Concurrency {
     pub scope: Scope,
     #[serde(default)]
     pub mode: Mode,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub limit: Option<u32>,
     #[serde(default)]
     pub on_busy: OnBusy,
@@ -121,13 +131,38 @@ pub fn declared<'de, D: Deserializer<'de>>(deserializer: D) -> std::result::Resu
     deserializer.deserialize_any(Many)
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug)]
+#[derive(Clone, Debug)]
 pub struct Holder {
     pub pid: i32,
     pub task: String,
     pub checkout: String,
     pub mode: Mode,
     pub since: String,
+}
+
+impl Holder {
+    /// One line of tab-separated fields, the checkout last since only a path may hold a tab.
+    fn record(&self) -> String {
+        let mode = match self.mode {
+            Mode::Exclusive => "exclusive",
+            Mode::Shared => "shared",
+        };
+        format!("{}\t{}\t{mode}\t{}\t{}\n", self.pid, self.task, self.since, self.checkout)
+    }
+
+    fn parse(text: &str) -> Option<Holder> {
+        let mut fields = text.trim_end_matches('\n').splitn(5, '\t');
+        let pid = fields.next()?.parse().ok()?;
+        let task = fields.next()?.to_string();
+        let mode = match fields.next()? {
+            "exclusive" => Mode::Exclusive,
+            "shared" => Mode::Shared,
+            _ => return None,
+        };
+        let since = fields.next()?.to_string();
+        let checkout = fields.next()?.to_string();
+        Some(Holder { pid, task, checkout, mode, since })
+    }
 }
 
 pub fn describe(holders: &[Holder]) -> String {
@@ -338,9 +373,8 @@ impl Group {
             mode: self.concurrency.mode,
             since: now(),
         };
-        let text = serde_json::to_string(&holder).unwrap_or_default();
         file.set_len(0)
-            .and_then(|_| file.write_all(format!("{text}\n").as_bytes()))
+            .and_then(|_| file.write_all(holder.record().as_bytes()))
             .and_then(|_| fs::rename(&intent.path, &path))
             .map_err(|error| Error::io(format!("write {}", path.display()), error))?;
         Ok((path, file))
@@ -359,10 +393,10 @@ impl Group {
                 continue;
             }
             let mut text = String::new();
-            if file.read_to_string(&mut text).is_ok() {
-                if let Ok(holder) = serde_json::from_str::<Holder>(text.trim()) {
-                    found.push(holder);
-                }
+            if file.read_to_string(&mut text).is_ok()
+                && let Some(holder) = Holder::parse(&text)
+            {
+                found.push(holder);
             }
         }
         found.sort_by_key(|holder| holder.pid);

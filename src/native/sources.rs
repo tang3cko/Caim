@@ -194,10 +194,10 @@ impl Sources {
             Err(error) if missing(&error) => None,
             Err(error) => return Err(Error::io(format!("stat {}", source.path), error)),
         };
-        if source.target.is_some() && present != Some(source.target_id) {
-            if let Some(watch) = source.target.take() {
-                self.owners.remove(&watch.token());
-            }
+        if present != Some(source.target_id)
+            && let Some(watch) = source.target.take()
+        {
+            self.owners.remove(&watch.token());
         }
         if let (Some(identity), None) = (present, &source.target) {
             match queue.watch(Path::new(&source.path), false, Interest::Source) {

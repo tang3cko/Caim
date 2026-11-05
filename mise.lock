@@ -50,9 +50,9 @@ url_api = "https://api.github.com/repos/rhysd/actionlint/releases/assets/3849249
 provenance = "github-attestations"
 
 [[tools.rust]]
-version = "1.96.0"
+version = "1.99.1"
 backend = "core:rust"
-specifiers = ["1.96.0"]
+specifiers = ["1.99.1"]
 
 [tools.rust.options]
 components = "clippy,rustfmt"
