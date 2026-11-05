@@ -375,10 +375,10 @@ pub fn group_members(group: i32) -> Result<Vec<i32>> {
     let mut members = Vec::new();
     for entry in entries.flatten() {
         let Ok(pid) = entry.file_name().to_string_lossy().parse::<i32>() else { continue };
-        if let Ok(fields) = stat_fields(pid) {
-            if fields.get(2).and_then(|pgrp| pgrp.parse::<i32>().ok()) == Some(group) {
-                members.push(pid);
-            }
+        if let Ok(fields) = stat_fields(pid)
+            && fields.get(2).and_then(|pgrp| pgrp.parse::<i32>().ok()) == Some(group)
+        {
+            members.push(pid);
         }
     }
     Ok(members)
