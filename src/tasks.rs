@@ -3,8 +3,7 @@ use crate::error::{BUSY, CANNOT_EXECUTE, CONFIG, Error, FAILED, NOT_FOUND, OK, R
 use crate::native::{self, Ended, Report, RunPlan, StopStep, WatchPlan};
 use crate::{digests, waits};
 use regex::Regex;
-use serde::{Deserialize, Serialize};
-use serde_json::json;
+use serde::Deserialize;
 use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::CString;
@@ -20,7 +19,7 @@ fn default_true() -> bool {
     true
 }
 
-#[derive(Deserialize, Serialize, Clone, Debug, Default)]
+#[derive(Deserialize, Clone, Debug, Default)]
 #[serde(deny_unknown_fields)]
 pub struct Watch {
     #[serde(default)]
@@ -29,14 +28,13 @@ pub struct Watch {
     pub dirs: Vec<String>,
 }
 
-#[derive(Deserialize, Serialize, Clone, Debug)]
+#[derive(Deserialize, Clone, Debug)]
 #[serde(deny_unknown_fields)]
 pub struct Arg {
     pub name: String,
     pub help: String,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(default)]
     pub choices: Vec<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub default: Option<String>,
     #[serde(default)]
     pub required: bool,
@@ -44,14 +42,13 @@ pub struct Arg {
     pub flag: bool,
 }
 
-#[derive(Deserialize, Serialize, Clone, Debug)]
+#[derive(Deserialize, Clone, Debug)]
 #[serde(deny_unknown_fields)]
 pub struct Declaration {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub description: Option<String>,
     #[serde(default = "default_true")]
     pub guard: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub lock: Option<String>,
     #[serde(default)]
     pub after: Vec<String>,
@@ -65,22 +62,22 @@ pub struct Declaration {
     pub watch: Watch,
     #[serde(default)]
     pub args: Vec<Arg>,
-    #[serde(default, deserialize_with = "concurrency::declared", skip_serializing_if = "Vec::is_empty")]
+    #[serde(default, deserialize_with = "concurrency::declared")]
     pub concurrency: Vec<Concurrency>,
     pub run: Run,
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    #[serde(default)]
     pub env: BTreeMap<String, String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub idle: Option<f64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub stop: Option<Vec<String>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub dir: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub group: Option<String>,
 }
 
-#[derive(Deserialize, Serialize, Clone, Debug)]
+#[derive(Deserialize, Clone, Debug)]
 #[serde(untagged)]
 pub enum Run {
     Shell(String),
@@ -95,14 +92,11 @@ pub struct Hook {
 
 pub type Commands = BTreeMap<String, Vec<String>>;
 
-#[derive(Serialize, Clone, Debug)]
+#[derive(Clone, Debug)]
 pub struct Task {
     pub name: String,
-    #[serde(flatten)]
     pub declaration: Declaration,
-    #[serde(skip)]
     pub command: Vec<String>,
-    #[serde(skip)]
     pub source: String,
 }
 
@@ -174,7 +168,7 @@ fn check(name: &str, declaration: &Declaration, at: &str, hooks: &Commands) -> R
     }
     let mut seen = BTreeSet::new();
     for arg in &declaration.args {
-        let problem = if !valid_name(&arg.name) || arg.name == "help" || arg.name == "json" {
+        let problem = if !valid_name(&arg.name) || arg.name == "help" {
             Some("is not a valid argument name")
         } else if !seen.insert(arg.name.clone()) {
             Some("is declared twice")
@@ -322,18 +316,16 @@ pub fn parse_args(task: &Task, args: &[String]) -> std::result::Result<BTreeMap<
 
 struct Named<'t> {
     tasks: Vec<(&'t Task, Vec<String>)>,
-    json: bool,
     help: bool,
 }
 
 fn name_tasks<'t>(tasks: &'t BTreeMap<String, Task>, args: &[String]) -> std::result::Result<Named<'t>, String> {
-    let mut named = Named { tasks: Vec::new(), json: false, help: false };
+    let mut named = Named { tasks: Vec::new(), help: false };
     let mut i = 0;
     while i < args.len() {
         let text = &args[i];
         i += 1;
         match text.as_str() {
-            "--json" => named.json = true,
             "--help" | "-h" => named.help = true,
             _ if !text.starts_with('-') => match tasks.get(text) {
                 Some(task) => named.tasks.push((task, Vec::new())),
@@ -370,7 +362,7 @@ fn arguments(values: &BTreeMap<String, String>) -> Vec<(String, String)> {
 
 pub fn usage(task: &Task) -> String {
     let about = task.declaration.description.as_ref().map(|text| format!(" — {text}")).unwrap_or_default();
-    let mut text = format!("{}{about}\n\nusage: caim {} [--json]", task.name, task.name);
+    let mut text = format!("{}{about}\n\nusage: caim {}", task.name, task.name);
     for arg in &task.declaration.args {
         let shape = if arg.flag { format!("--{}", arg.name) } else { format!("--{} <value>", arg.name) };
         text += &if arg.required { format!(" {shape}") } else { format!(" [{shape}]") };
@@ -414,24 +406,13 @@ pub fn usage(task: &Task) -> String {
                 None => "shared".into(),
             },
         };
-        let scope = serde_json::to_value(group.scope).ok().and_then(|value| value.as_str().map(String::from));
-        facts.push(format!("holds {} ({mode}, per {})", group.group, scope.unwrap_or_default()));
+        facts.push(format!("holds {} ({mode}, per {})", group.group, group.scope.name()));
     }
     text + &format!("\n{}\n", facts.join("; "))
 }
 
-fn list(tasks: &BTreeMap<String, Task>, json: bool) -> i32 {
+fn list(tasks: &BTreeMap<String, Task>) -> i32 {
     let shown: Vec<&Task> = tasks.values().filter(|task| !task.declaration.hidden).collect();
-    if json {
-        match serde_json::to_string_pretty(&shown) {
-            Ok(text) => println!("{text}"),
-            Err(error) => {
-                eprintln!("caim: cannot write the task list: {error}");
-                return FAILED;
-            }
-        }
-        return OK;
-    }
     let mut groups: BTreeMap<Option<&str>, Vec<&Task>> = BTreeMap::new();
     for task in shown {
         groups.entry(task.declaration.group.as_deref()).or_default().push(task);
@@ -450,7 +431,7 @@ fn list(tasks: &BTreeMap<String, Task>, json: bool) -> i32 {
 }
 
 fn general_usage() -> &'static str {
-    "usage: caim list [--json] | caim [--help] [--json] <task> [--name value ...] [<task> [--name value ...] ...]"
+    "usage: caim list | caim [--help] <task> [--name value ...] [<task> [--name value ...] ...]"
 }
 
 pub const PROJECT_FILE: &str = "caim.toml";
@@ -517,12 +498,11 @@ pub fn main(args: &[String]) -> i32 {
     };
     if help {
         println!("{}\n", general_usage());
-        return list(&tasks, false);
+        return list(&tasks);
     }
     match args.first().map(String::as_str) {
         Some("list") => match &args[1..] {
-            [] => list(&tasks, false),
-            [json] if json == "--json" => list(&tasks, true),
+            [] => list(&tasks),
             _ => {
                 eprintln!("{}", general_usage());
                 USAGE
@@ -555,7 +535,7 @@ pub fn main(args: &[String]) -> i32 {
                     }
                 }
             }
-            let mut runner = Runner::new(root, project, hooks, &tasks, named.json);
+            let mut runner = Runner::new(root, project, hooks, &tasks);
             for (task, values) in runs {
                 if runner.done.contains(&task.name) {
                     continue;
@@ -578,7 +558,7 @@ enum Reason {
     NotStarted,
     Required(String),
     Lock(String),
-    Busy(Concurrency, Vec<Holder>),
+    Busy(String),
 }
 
 impl Reason {
@@ -601,7 +581,7 @@ impl Reason {
             Reason::NotStarted => " (did not start)".into(),
             Reason::Required(task) => format!(" (required task {task} did not pass)"),
             Reason::Lock(hook) => format!(" ({hook} hook)"),
-            Reason::Busy(group, _) => format!(" (busy: {})", group.group),
+            Reason::Busy(group) => format!(" (busy: {group})"),
             other => format!(" ({})", other.code()),
         }
     }
@@ -610,8 +590,6 @@ impl Reason {
 /// Writes to stdout never end the run: a reader that went away costs the output, not the
 /// supervision.
 struct Out {
-    json: bool,
-    partial: Vec<u8>,
     ended_line: bool,
 }
 
@@ -622,87 +600,41 @@ impl Out {
         let _ = stdout.flush();
     }
 
-    fn event(&self, value: serde_json::Value) {
-        self.write(format!("{value}\n").as_bytes());
-    }
-
-    fn output(&mut self, task: &str, bytes: &[u8]) {
+    fn output(&mut self, bytes: &[u8]) {
         if bytes.is_empty() {
             return;
         }
-        if !self.json {
-            self.write(bytes);
-            self.ended_line = bytes.ends_with(b"\n");
-            return;
-        }
-        self.partial.extend_from_slice(bytes);
-        let mut begin = 0;
-        while let Some(offset) = self.partial[begin..].iter().position(|&c| c == b'\n') {
-            let line = String::from_utf8_lossy(&self.partial[begin..begin + offset]).into_owned();
-            self.event(json!({"event": "output", "task": task, "line": line}));
-            begin += offset + 1;
-        }
-        self.partial.drain(..begin);
+        self.write(bytes);
+        self.ended_line = bytes.ends_with(b"\n");
     }
 
-    fn end_output(&mut self, task: &str) {
-        if self.json && !self.partial.is_empty() {
-            let line = String::from_utf8_lossy(&std::mem::take(&mut self.partial)).into_owned();
-            self.event(json!({"event": "output", "task": task, "line": line}));
-        }
-        if !self.json && !self.ended_line {
+    fn end_output(&mut self) {
+        if !self.ended_line {
             self.write(b"\n");
         }
         self.ended_line = true;
     }
 
-    fn message(&self, task: &str, text: &str) {
-        if self.json {
-            self.event(json!({"event": "message", "task": task, "text": text}));
-        } else {
-            eprintln!("{text}");
-        }
+    fn message(&self, text: &str) {
+        eprintln!("{text}");
     }
 
-    fn messages(&self, task: &str, bytes: &[u8]) {
+    fn messages(&self, bytes: &[u8]) {
         for line in String::from_utf8_lossy(bytes).lines() {
-            self.message(task, line);
+            self.message(line);
         }
     }
 
     fn waiting(&self, task: &str, group: &Concurrency, holders: &[Holder]) {
-        if self.json {
-            self.event(json!({"event": "waiting", "task": task, "concurrency": group, "holders": holders}));
-        } else {
-            eprintln!("{task} waits: {} is held by {}", group.group, concurrency::describe(holders));
-        }
+        eprintln!("{task} waits: {} is held by {}", group.group, concurrency::describe(holders));
     }
 
-    fn hook(&self, task: &str, hook: &str, line: &str) {
-        if self.json {
-            self.event(json!({"event": "hook", "task": task, "hook": hook, "line": line}));
-        } else {
-            self.write(format!("{line}\n").as_bytes());
-        }
+    fn hook(&self, line: &str) {
+        self.write(format!("{line}\n").as_bytes());
     }
 
-    fn ended(&self, task: &str, status: i32, reason: &Reason, changed_by: Option<&str>) {
-        if !self.json {
-            self.write(format!("[{task}] exit={status}{}\n", reason.note()).as_bytes());
-            return;
-        }
-        let mut event = json!({"event": "exit", "task": task, "exit": status, "reason": reason.code()});
-        match (reason, changed_by) {
-            (Reason::Required(required), _) => event["required"] = json!(required),
-            (Reason::Lock(hook), _) => event["hook"] = json!(hook),
-            (Reason::Busy(group, holders), _) => {
-                event["concurrency"] = json!(group);
-                event["holders"] = json!(holders);
-            }
-            (_, Some(hook)) => event["hook"] = json!(hook),
-            _ => {}
-        }
-        self.event(event);
+    fn ended(&self, task: &str, status: i32, reason: &Reason) {
+        self.write(format!("[{task}] exit={status}{}\n", reason.note()).as_bytes());
     }
 }
 
@@ -766,19 +698,11 @@ struct Runner<'a> {
 }
 
 impl<'a> Runner<'a> {
-    fn new(root: PathBuf, project: String, hooks: Commands, tasks: &'a BTreeMap<String, Task>, json: bool) -> Self {
+    fn new(root: PathBuf, project: String, hooks: Commands, tasks: &'a BTreeMap<String, Task>) -> Self {
         let held = std::env::var(concurrency::HELD)
             .map(|text| text.lines().filter(|line| !line.is_empty()).map(String::from).collect())
             .unwrap_or_default();
-        Runner {
-            root,
-            project,
-            hooks,
-            tasks,
-            done: BTreeSet::new(),
-            out: RefCell::new(Out { json, partial: Vec::new(), ended_line: true }),
-            held,
-        }
+        Runner { root, project, hooks, tasks, done: BTreeSet::new(), out: RefCell::new(Out { ended_line: true }), held }
     }
 
     fn set_held(&self) {
@@ -797,22 +721,22 @@ impl<'a> Runner<'a> {
         hook
     }
 
-    fn call_hook(&self, task: &str, hook: &str, command: &mut Command) -> i32 {
+    fn call_hook(&self, hook: &str, command: &mut Command) -> i32 {
         let output = command.current_dir(&self.root).stdin(Stdio::null()).stderr(Stdio::inherit()).output();
         let out = self.out.borrow();
         match output {
             Ok(output) => {
                 for line in String::from_utf8_lossy(&output.stdout).lines() {
-                    out.hook(task, hook, line);
+                    out.hook(line);
                 }
                 output.status.code().unwrap_or_else(|| {
                     let signal = std::os::unix::process::ExitStatusExt::signal(&output.status).unwrap_or(0);
-                    out.message(task, &format!("the {hook} hook was killed by signal {signal}"));
+                    out.message(&format!("the {hook} hook was killed by signal {signal}"));
                     128 + signal
                 })
             }
             Err(error) => {
-                out.message(task, &format!("the {hook} hook could not run: {error}"));
+                out.message(&format!("the {hook} hook could not run: {error}"));
                 error.raw_os_error().map_or(FAILED, not_started)
             }
         }
@@ -828,7 +752,7 @@ impl<'a> Runner<'a> {
             let defaults = parse_args(other, &[]).unwrap_or_default();
             let status = self.run(other, &defaults);
             if status != OK {
-                self.out.borrow().ended(name, status, &Reason::Required(required.clone()), None);
+                self.out.borrow().ended(name, status, &Reason::Required(required.clone()));
                 return status;
             }
         }
@@ -846,23 +770,24 @@ impl<'a> Runner<'a> {
             Ok(Outcome::Held(held)) => held,
             Ok(Outcome::Busy { group, holders }) => {
                 let out = self.out.borrow();
-                out.message(
-                    name,
-                    &format!("{name} did not start; {} is held by {}", group.group, concurrency::describe(&holders)),
-                );
-                out.ended(name, BUSY, &Reason::Busy(group, holders), None);
+                out.message(&format!(
+                    "{name} did not start; {} is held by {}",
+                    group.group,
+                    concurrency::describe(&holders)
+                ));
+                out.ended(name, BUSY, &Reason::Busy(group.group));
                 return BUSY;
             }
             Err(Error::Interrupted(signal)) => {
                 let out = self.out.borrow();
-                out.message(name, &format!("{name} was interrupted while it waited for its concurrency groups"));
-                out.ended(name, 128 + signal, &Reason::Interrupted, None);
+                out.message(&format!("{name} was interrupted while it waited for its concurrency groups"));
+                out.ended(name, 128 + signal, &Reason::Interrupted);
                 return 128 + signal;
             }
             Err(error) => {
                 let out = self.out.borrow();
-                out.message(name, &format!("{name} did not start; {error}"));
-                out.ended(name, FAILED, &Reason::NotStarted, None);
+                out.message(&format!("{name} did not start; {error}"));
+                out.ended(name, FAILED, &Reason::NotStarted);
                 return FAILED;
             }
         };
@@ -879,9 +804,9 @@ impl<'a> Runner<'a> {
     fn run_holding(&mut self, task: &Task, values: &BTreeMap<String, String>) -> i32 {
         let name = &task.name;
         if let Some(lock) = &task.declaration.lock {
-            let status = self.call_hook(name, lock, self.hook(lock).env("CAIM_TASK", name).envs(arguments(values)));
+            let status = self.call_hook(lock, self.hook(lock).env("CAIM_TASK", name).envs(arguments(values)));
             if status != OK {
-                self.out.borrow().ended(name, status, &Reason::Lock(lock.clone()), None);
+                self.out.borrow().ended(name, status, &Reason::Lock(lock.clone()));
                 return status;
             }
         }
@@ -898,28 +823,28 @@ impl<'a> Runner<'a> {
         };
         if let Some((status, missing)) = missing {
             let out = self.out.borrow();
-            out.message(name, &format!("{name} did not start; {missing}"));
-            out.ended(name, status, &Reason::NotStarted, None);
+            out.message(&format!("{name} did not start; {missing}"));
+            out.ended(name, status, &Reason::NotStarted);
             return status;
         }
         let channel = match Channel::new() {
             Ok(channel) => channel,
             Err(error) => {
                 let out = self.out.borrow();
-                out.message(name, &format!("{name} did not start; {error}"));
-                out.ended(name, FAILED, &Reason::NotStarted, None);
+                out.message(&format!("{name} did not start; {error}"));
+                out.ended(name, FAILED, &Reason::NotStarted);
                 return FAILED;
             }
         };
         let (status, reason) = self.supervised(task, values, &channel);
-        let (status, changed_by) = self.after(task, values, &channel, status);
-        self.out.borrow().ended(name, status, &reason, changed_by.as_deref());
+        let status = self.after(task, values, &channel, status);
+        self.out.borrow().ended(name, status, &reason);
         status
     }
 
     fn supervised(&self, task: &Task, values: &BTreeMap<String, String>, channel: &Channel) -> (i32, Reason) {
         let name = &task.name;
-        let say = |text: &str| self.out.borrow().message(name, text);
+        let say = |text: &str| self.out.borrow().message(text);
         let idle = match (task.declaration.idle, std::env::var("CAIM_STALL_SECONDS")) {
             (Some(idle), _) => idle,
             (None, Ok(text)) => match text.parse::<f64>() {
@@ -947,7 +872,6 @@ impl<'a> Runner<'a> {
         environment.extend(arguments(values));
         environment.extend(task.declaration.env.iter().map(|(key, value)| (key.clone(), value.clone())));
         let guarded = task.declaration.guard;
-        let json = self.out.borrow().json;
         let at = |path: &String| self.root.join(path).to_string_lossy().into_owned();
         let watch = &task.declaration.watch;
         let plan = RunPlan {
@@ -966,8 +890,8 @@ impl<'a> Runner<'a> {
             },
             steps: stop_steps(task),
             directory: Some(self.directory(task).to_string_lossy().into_owned()),
-            inherit: !guarded && !json,
-            capture: guarded || json,
+            inherit: !guarded,
+            capture: guarded,
             environment,
             ..RunPlan::default()
         };
@@ -977,12 +901,7 @@ impl<'a> Runner<'a> {
         let ended = native::supervise(
             &plan,
             Report {
-                started: &mut |pid| {
-                    let out = self.out.borrow();
-                    if out.json {
-                        out.event(json!({"event": "start", "task": name, "pid": pid}));
-                    }
-                },
+                started: &mut |_| {},
                 stalled: &mut |pid| {
                     stall = format!(
                         "{name} (pid {pid}) made no progress for {idle} s: no new kind of line in its output or declared logs and no new entry in its declared directories"
@@ -990,16 +909,16 @@ impl<'a> Runner<'a> {
                 },
                 unavailable: &mut |error| broken = error.to_string(),
                 stops: &mut stops,
-                output: &mut |bytes| self.out.borrow_mut().output(name, bytes),
+                output: &mut |bytes| self.out.borrow_mut().output(bytes),
             },
         );
-        self.out.borrow_mut().end_output(name);
+        self.out.borrow_mut().end_output();
         native::restore_signals();
         let show_stops = |stops: &[u8]| {
-            self.out.borrow().messages(name, stops);
+            self.out.borrow().messages(stops);
             let mut launched = Vec::new();
             self.stop_launches(&registry, &plan.steps, &mut launched);
-            self.out.borrow().messages(name, &launched);
+            self.out.borrow().messages(&launched);
         };
         match ended {
             Ok(Ended::Exit(status)) => (status, Reason::Exited),
@@ -1055,17 +974,9 @@ impl<'a> Runner<'a> {
         }
     }
 
-    fn after(
-        &self,
-        task: &Task,
-        values: &BTreeMap<String, String>,
-        channel: &Channel,
-        mut status: i32,
-    ) -> (i32, Option<String>) {
-        let mut changed_by = None;
+    fn after(&self, task: &Task, values: &BTreeMap<String, String>, channel: &Channel, mut status: i32) -> i32 {
         for hook in &task.declaration.after {
             let code = self.call_hook(
-                &task.name,
                 hook,
                 self.hook(hook)
                     .env("CAIM_TASK", &task.name)
@@ -1075,9 +986,8 @@ impl<'a> Runner<'a> {
             );
             if code != OK {
                 status = code;
-                changed_by = Some(hook.clone());
             }
         }
-        (status, changed_by)
+        status
     }
 }
