@@ -499,21 +499,27 @@ pub fn load() -> Result<BTreeMap<String, Task>> {
 }
 
 pub fn main(args: &[String]) -> i32 {
+    let help = matches!(args.first().map(String::as_str), None | Some("--help") | Some("-h") | Some("help"));
     let found = project().and_then(|(root, file)| {
         discover(&root, file.hooks, file.tasks).map(|(hooks, tasks)| (root, file.name, hooks, tasks))
     });
     let (root, project, hooks, tasks) = match found {
         Ok(found) => found,
+        Err(error) if help => {
+            println!("{}", general_usage());
+            eprintln!("caim: {error}");
+            return OK;
+        }
         Err(error) => {
             eprintln!("caim: {error}");
             return CONFIG;
         }
     };
+    if help {
+        println!("{}\n", general_usage());
+        return list(&tasks, false);
+    }
     match args.first().map(String::as_str) {
-        None | Some("--help") | Some("-h") | Some("help") => {
-            println!("{}\n", general_usage());
-            list(&tasks, false)
-        }
         Some("list") => match &args[1..] {
             [] => list(&tasks, false),
             [json] if json == "--json" => list(&tasks, true),
@@ -522,7 +528,7 @@ pub fn main(args: &[String]) -> i32 {
                 USAGE
             }
         },
-        Some(_) => {
+        _ => {
             let named = match name_tasks(&tasks, args) {
                 Ok(named) if !named.tasks.is_empty() => named,
                 Ok(_) => {
