@@ -829,6 +829,14 @@ fn a_project_is_found_from_below_and_must_name_itself() {
     let (status, output) = run(&mut command);
     assert_eq!(status, 78, "{output}");
     assert!(output.contains("no caim.toml in the current directory or above it"), "{output}");
+    for help in ["--help", "-h", "help"] {
+        let mut command = isolated(&outside.0, &project.locks.0, &[help]);
+        command.env_remove("CAIM_ROOT").current_dir(&outside.0);
+        let (status, stdout, stderr) = split(&mut command);
+        assert_eq!(status, 0, "{help}: {stdout}{stderr}");
+        assert!(stdout.starts_with("usage: caim "), "{help}: {stdout}");
+        assert!(stderr.contains("no caim.toml in the current directory or above it"), "{help}: {stderr}");
+    }
 
     for (text, expected) in [
         ("", "missing field `name`"),
