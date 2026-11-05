@@ -1,4 +1,22 @@
 {
   $schema: "https://docs.renovatebot.com/renovate-schema.json",
   extends: ["github>tang3cko/renovate-config:default.json5"],
+
+  // The cargo manager leaves rust-version alone; it follows the Rust pinned in mise.toml, in the same PR.
+  customManagers: [
+    {
+      customType: "regex",
+      description: "rust-version in Cargo.toml",
+      managerFilePatterns: ["/^Cargo\\.toml$/"],
+      matchStrings: ['\\nrust-version = "(?<currentValue>[^"]+)"'],
+      depNameTemplate: "rust",
+      datasourceTemplate: "rust-version",
+    },
+  ],
+  packageRules: [
+    {
+      matchDatasources: ["rust-version"],
+      groupName: "rust",
+    },
+  ],
 }

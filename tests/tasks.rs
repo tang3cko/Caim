@@ -93,18 +93,10 @@ fn last_line(output: &str) -> &str {
     output.lines().last().unwrap_or_default()
 }
 
-fn events(stdout: &str) -> Vec<serde_json::Value> {
-    stdout.lines().map(|line| serde_json::from_str(line).unwrap_or_else(|_| panic!("not JSON: {line:?}"))).collect()
-}
-
-fn of<'a>(events: &'a [serde_json::Value], kind: &str) -> Vec<&'a serde_json::Value> {
-    events.iter().filter(|event| event["event"] == kind).collect()
-}
-
 const SIMPLE: &str = "description = \"a task\"\n";
 
 #[test]
-fn list_shows_tasks_by_group_and_as_json() {
+fn list_shows_tasks_by_group() {
     let project = Project::new();
     project.task("build", "alpha", SIMPLE, "exit 0");
     project.task(
@@ -120,16 +112,11 @@ fn list_shows_tasks_by_group_and_as_json() {
     assert!(output.contains("deploy:\n  beta"), "{output}");
     assert!(output.contains("(a person runs it)"), "{output}");
     assert!(!output.contains("internal"), "{output}");
-    let (status, output) = project.run(&["list", "--json"]);
-    assert_eq!(status, 0, "{output}");
-    let listed: serde_json::Value = serde_json::from_str(&output).unwrap();
-    let names: Vec<&str> = listed.as_array().unwrap().iter().map(|task| task["name"].as_str().unwrap()).collect();
-    assert_eq!(names, vec!["alpha", "beta"]);
-    assert_eq!(listed[0]["group"], "build");
-    assert_eq!(listed[1]["args"][0]["default"], "all");
-    assert_eq!(listed[1]["human"], true);
-    assert_eq!(listed[0]["guard"], true);
-    assert_eq!(project.run(&["list", "--yaml"]).0, 64);
+    let (status, help) = project.run(&["beta", "--help"]);
+    assert_eq!(status, 0, "{help}");
+    assert!(help.contains("default all"), "{help}");
+    assert!(help.contains("run by a person, not an agent"), "{help}");
+    assert_eq!(project.run(&["list", "--json"]).0, 64);
     project.untouched(&[]);
 }
 
@@ -161,7 +148,7 @@ fn bad_usage_is_64_before_anything_runs() {
     project.untouched(&[]);
     let (status, output) = project.run(&["picky", "--help"]);
     assert_eq!(status, 0);
-    assert!(output.contains("usage: caim picky [--json] [--step <value>] --target <value> [--fast]"), "{output}");
+    assert!(output.contains("usage: caim picky [--step <value>] --target <value> [--fast]"), "{output}");
     assert!(output.contains("one of all, gather; default all"), "{output}");
 }
 
@@ -178,8 +165,8 @@ fn a_broken_declaration_stops_everything_as_setup() {
         ("check", "loop", "description = \"t\"\nrequires = [\"loop\"]\n", "requirement cycle"),
         (
             "check",
-            "jsonish",
-            "description = \"t\"\n[[args]]\nname = \"json\"\nhelp = \"h\"\n",
+            "helpful",
+            "description = \"t\"\n[[args]]\nname = \"help\"\nhelp = \"h\"\n",
             "not a valid argument name",
         ),
         (
@@ -257,11 +244,10 @@ fn several_tasks_run_in_order_and_stop_at_the_first_that_does_not_pass() {
     assert_eq!(status, 0);
     assert_eq!(order_text, "one none\ntop\n", "a task already run, as a requirement or before, runs once");
 
-    let (status, stdout, _, _) = ran(&["--json", "one", "two"]);
+    let (status, stdout, _, _) = ran(&["one", "two"]);
     assert_eq!(status, 0);
-    let verdicts: Vec<String> =
-        of(&events(&stdout), "exit").iter().map(|event| event["task"].as_str().unwrap().to_string()).collect();
-    assert_eq!(verdicts, vec!["one", "two"]);
+    let verdicts: Vec<&str> = stdout.lines().filter(|line| line.starts_with('[')).collect();
+    assert_eq!(verdicts, vec!["[one] exit=0", "[two] exit=0"]);
 
     let (status, stdout, _, order_text) = ran(&["one", "two", "--help"]);
     assert_eq!(status, 0);
@@ -303,16 +289,11 @@ fn a_task_written_in_caim_toml_runs_like_any_other() {
     assert!(stdout.starts_with("  bare                   \n  both "), "ungrouped tasks come first: {stdout}");
     assert!(stdout.contains("check:\n  scripted"), "{stdout}");
     assert!(stdout.contains("tools:\n  literal"), "{stdout}");
-    let listed: serde_json::Value = serde_json::from_str(&split(&mut project.x(&["list", "--json"])).1).unwrap();
-    let greet = listed.as_array().unwrap().iter().find(|task| task["name"] == "greet").unwrap();
-    assert!(greet["run"].as_str().unwrap().starts_with("echo"), "{greet}");
-    assert!(greet.get("group").is_none(), "{greet}");
     let (_, help) = project.run(&["greet", "--help"]);
     assert!(help.contains("declared in caim.toml [tasks.greet]"), "{help}");
     let (status, help) = project.run(&["bare", "--help"]);
     assert_eq!(status, 0, "{help}");
     assert!(help.starts_with("bare\n\nusage: caim bare"), "a task needs no description: {help}");
-    assert!(listed.as_array().unwrap().iter().any(|task| task["name"] == "bare" && task.get("description").is_none()));
 
     for (tasks, expected) in [
         ("\n[tasks.empty]\ndescription = \"t\"\nrun = []\n", "run is an empty list"),
@@ -547,7 +528,7 @@ fn a_reader_that_leaves_early_does_not_end_the_supervision() {
 }
 
 #[test]
-fn json_streams_one_event_per_line_and_ends_in_the_verdict() {
+fn the_output_is_the_tasks_then_one_exit_line_each() {
     let project = Project::new();
     project.task("check", "base", SIMPLE, "echo 'from base'");
     project.task(
@@ -556,44 +537,22 @@ fn json_streams_one_event_per_line_and_ends_in_the_verdict() {
         "description = \"t\"\nrequires = [\"base\"]\n[[args]]\nname = \"n\"\nhelp = \"h\"\ndefault = \"1\"\n",
         "printf 'one\\ntwo \"quoted\"\\nno newline'",
     );
-    let (status, stdout, stderr) = split(&mut project.x(&["top", "--json", "--n", "2"]));
+    let (status, stdout, stderr) = split(&mut project.x(&["top", "--n", "2"]));
     assert_eq!(status, 0, "{stdout}{stderr}");
-    let all = events(&stdout);
-    let last = all.last().unwrap();
-    assert_eq!(last["event"], "exit");
-    assert_eq!(last["task"], "top");
-    assert_eq!(last["task"], "top");
-    assert_eq!(last["exit"], 0);
-    assert_eq!(last["reason"], "exited");
-    let lines: Vec<(&str, &str)> = of(&all, "output")
-        .iter()
-        .map(|event| (event["task"].as_str().unwrap(), event["line"].as_str().unwrap()))
-        .collect();
-    assert_eq!(lines, vec![("base", "from base"), ("top", "one"), ("top", "two \"quoted\""), ("top", "no newline")]);
-    let started: Vec<&str> = of(&all, "start").iter().map(|event| event["task"].as_str().unwrap()).collect();
-    assert_eq!(started, vec!["base", "top"]);
-    assert!(of(&all, "start").iter().all(|event| event["pid"].as_i64().unwrap() > 0));
-    assert_eq!(of(&all, "exit").len(), 2);
+    assert_eq!(stdout, "from base\n[base] exit=0\none\ntwo \"quoted\"\nno newline\n[top] exit=0\n");
 
     project.task("check", "silent", SIMPLE, "exec tail -f /dev/null");
-    let (status, stdout, _) = split(project.x(&["silent", "--json"]).env("CAIM_STALL_SECONDS", "1"));
+    let (status, stdout, stderr) = split(project.x(&["silent"]).env("CAIM_STALL_SECONDS", "1"));
     assert_eq!(status, 124);
-    let all = events(&stdout);
-    assert_eq!(all.last().unwrap()["reason"], "stalled");
-    assert_eq!(all.last().unwrap()["exit"], 124);
-    assert!(
-        of(&all, "message").iter().any(|event| event["text"].as_str().unwrap().contains("[stop] TERM")),
-        "{stdout}"
-    );
+    assert_eq!(last_line(&stdout), "[silent] exit=124 (stalled)");
+    assert!(stderr.contains("[stop] TERM"), "{stderr}");
 
     project.hook("refuse", "echo 'held'; exit 4");
     project.task("check", "held", "description = \"t\"\nlock = \"refuse\"\n", "exit 0");
-    let (status, stdout, _) = split(&mut project.x(&["held", "--json"]));
+    let (status, stdout, _) = split(&mut project.x(&["held"]));
     assert_eq!(status, 4);
-    let all = events(&stdout);
-    assert_eq!(of(&all, "hook")[0]["line"], "held");
-    assert_eq!(all.last().unwrap()["reason"], "lock");
-    assert_eq!(all.last().unwrap()["hook"], "refuse");
+    assert_eq!(stdout, "held\n[held] exit=4 (refuse hook)\n");
+    assert_eq!(project.run(&["held", "--json"]).0, 64);
 }
 
 #[test]
@@ -603,9 +562,6 @@ fn an_unguarded_task_keeps_the_terminal() {
     let (status, stdout, stderr) = split(&mut project.x(&["plain"]));
     assert_eq!(status, 0, "{stdout}{stderr}");
     assert_eq!(stdout, "to the terminal\n[plain] exit=0\n");
-    let (status, stdout, _) = split(&mut project.x(&["plain", "--json"]));
-    assert_eq!(status, 0);
-    assert_eq!(of(&events(&stdout), "output")[0]["line"], "to the terminal");
 }
 
 const HOLDS: &str =
@@ -668,15 +624,6 @@ fn a_busy_group_refuses_a_run_that_asks_to_be_refused() {
     assert!(stderr.contains(&format!("in {checkout}")), "{stderr}");
     assert_eq!(last_line(&stdout), "[second] exit=75 (busy: editor)", "{stdout}");
     assert!(!mark.exists());
-    let (status, stdout, _) = split(project.x(&["second", "--json"]).env("MARK", &mark));
-    assert_eq!(status, 75);
-    let verdict = events(&stdout).pop().unwrap();
-    assert_eq!(verdict["reason"], "busy");
-    assert_eq!(verdict["concurrency"]["group"], "editor");
-    assert_eq!(verdict["concurrency"]["scope"], "project");
-    assert_eq!(verdict["holders"][0]["task"], "first");
-    assert_eq!(verdict["holders"][0]["checkout"], checkout.as_str());
-    assert!(verdict["holders"][0]["pid"].as_i64().unwrap() > 0);
     let (status, output) = project.run(&["other"]);
     assert_eq!(status, 0, "another group is not held: {output}");
     let (status, output) = holder.release();
@@ -797,11 +744,10 @@ fn every_checkout_of_a_project_shares_a_group() {
     let (main, linked) = (&checkouts[0], &checkouts[1]);
     let holder = Holder::start(main.x(&["first"]), "first", &scratch.0);
 
-    let (status, stdout, stderr) = split(&mut linked.x(&["second", "--json"]));
+    let (status, stdout, stderr) = split(&mut linked.x(&["second"]));
     assert_eq!(status, 75, "another checkout of the project: {stdout}{stderr}");
-    let verdict = events(&stdout).pop().unwrap();
-    assert_eq!(verdict["concurrency"]["scope"], "project");
-    assert_eq!(verdict["holders"][0]["checkout"], main.dir.0.display().to_string().as_str());
+    assert!(stderr.contains("held by first (pid "), "{stderr}");
+    assert!(stderr.contains(&format!(" in {} since ", main.dir.0.display())), "{stderr}");
     let (status, output) = linked.run(&["own"]);
     assert_eq!(status, 0, "a checkout-scoped group is the checkout's own: {output}");
     let (status, output) = stranger.run(&["second"]);
@@ -829,6 +775,14 @@ fn a_project_is_found_from_below_and_must_name_itself() {
     let (status, output) = run(&mut command);
     assert_eq!(status, 78, "{output}");
     assert!(output.contains("no caim.toml in the current directory or above it"), "{output}");
+    for help in ["--help", "-h", "help"] {
+        let mut command = isolated(&outside.0, &project.locks.0, &[help]);
+        command.env_remove("CAIM_ROOT").current_dir(&outside.0);
+        let (status, stdout, stderr) = split(&mut command);
+        assert_eq!(status, 0, "{help}: {stdout}{stderr}");
+        assert!(stdout.starts_with("usage: caim "), "{help}: {stdout}");
+        assert!(stderr.contains("no caim.toml in the current directory or above it"), "{help}: {stderr}");
+    }
 
     for (text, expected) in [
         ("", "missing field `name`"),
@@ -1168,11 +1122,11 @@ fn completion_words_follow_the_command_line() {
         assert_eq!(status, 0, "{output}");
         output.lines().map(String::from).collect()
     };
-    assert_eq!(words(&[]), ["list", "--json", "--help", "build", "package"]);
+    assert_eq!(words(&[]), ["list", "--help", "build", "package"]);
     assert_eq!(words(&["package"]), ["--platform", "--fast", "--help", "build", "package"]);
     assert_eq!(words(&["package", "--platform"]), ["Mac", "Win64"]);
     assert_eq!(words(&["package", "--fast"]), ["--platform", "--fast", "--help", "build", "package"]);
-    assert_eq!(words(&["list"]), ["--json"]);
+    assert!(words(&["list"]).is_empty());
     assert_eq!(words(&["completions"]), ["bash", "zsh"]);
     let outside = TempDir::new();
     let (status, output) = run(caim().args(["completions", "words"]).current_dir(&outside.0).env_remove("CAIM_ROOT"));

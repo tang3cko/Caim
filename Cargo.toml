@@ -2,7 +2,7 @@
 name = "caim"
 version = "0.1.0"
 edition = "2024"
-rust-version = "1.85"
+rust-version = "1.99.1"
 description = "A task runner and process supervisor that judges a stalled run by the progress it declared"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/tang3cko/Caim"
@@ -19,8 +19,7 @@ path = "src/main.rs"
 libc = "=0.2.190"
 regex = "=1.13.1"
 serde = { version = "=1.0.229", features = ["derive"] }
-serde_json = "=1.0.151"
-toml = "=1.1.6"
+toml = { version = "=1.1.6", default-features = false, features = ["std", "parse", "serde"] }
 
 [profile.release]
 debug = false
