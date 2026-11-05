@@ -78,7 +78,7 @@ caim [--dry-run] <task> [--name value ...] [<task> [--name value ...] ...]
 caim completions bash|zsh
 ```
 
-Caim finds the project by the nearest `caim.toml` at or above the current directory (`CAIM_ROOT` overrides it) and runs tasks at the project's root. Several tasks on one line run in order, as make runs several targets; the first that does not succeed ends the line. A task runs at most once per line, whether it was named or required. Every task's arguments are checked before anything runs. `--dry-run` runs nothing and prints, in the order they would run, each task with its command, directory, arguments, environment names, concurrency groups and hooks.
+Caim finds the project by the nearest `caim.toml` at or above the current directory (`CAIM_ROOT` overrides it) and runs tasks at the project's root. Several tasks on one line run in order, as make runs several targets; the first that does not succeed ends the line. A task runs at most once per line with the same arguments, whether it was named or required; with other arguments, it runs again. Every task's arguments are checked before anything runs. `--dry-run` runs nothing and prints, in the order they would run, each task with its command, directory, arguments, environment names, concurrency groups and hooks.
 
 A run's stdout is the task's stdout and stderr, then one line, `[<task>] exit=N`, with the reason in parentheses when the command did not simply exit. Caim's own messages go to stderr.
 
@@ -93,7 +93,7 @@ A task needs only `run`: a string goes through `sh -c`, a list is the command an
 | `run` | The command | required |
 | `description` | One line for `list` and `--help` | none |
 | `group` | The heading `list` shows the task under | none |
-| `requires` | Tasks run first, each to success, with their defaults | none |
+| `requires` | Tasks run first, each to success: a name runs it with its defaults; `{ task = "build", args = { configuration = "Debug", clean = true } }` gives some arguments, and `{ arg = "configuration" }` as a value passes on this task's own | none |
 | `parallel` | Runs the tasks in `requires` at once, each output line prefixed with its task's name; they need the stall guard, and what they require runs first, once | `false` |
 | `args` | Arguments: `name`, `help`, and `choices`, `default`, `required` or `flag`; the command sees them as `CAIM_ARG_<NAME>` | none |
 | `guard` | Whether the stall guard watches the run; `false` gives the command the terminal | `true` |

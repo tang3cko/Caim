@@ -53,7 +53,7 @@ pub struct Declaration {
     #[serde(default)]
     pub after: Vec<String>,
     #[serde(default)]
-    pub requires: Vec<String>,
+    pub requires: Vec<Requirement>,
     #[serde(default)]
     pub human: bool,
     #[serde(default)]
@@ -77,6 +77,77 @@ pub struct Declaration {
     pub group: Option<String>,
     #[serde(default)]
     pub parallel: bool,
+}
+
+/// A task to run first: a name, or `{ task, args }` with some of its arguments given.
+#[derive(Clone, Debug)]
+pub struct Requirement {
+    pub task: String,
+    pub args: BTreeMap<String, Given>,
+}
+
+/// What a requirement gives one argument of its task.
+#[derive(Clone, Debug)]
+pub enum Given {
+    Value(String),
+    Flag(bool),
+    /// The requiring task's own argument of this name.
+    From(String),
+}
+
+impl<'de> Deserialize<'de> for Requirement {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> std::result::Result<Self, D::Error> {
+        struct Visitor;
+        impl<'de> serde::de::Visitor<'de> for Visitor {
+            type Value = Requirement;
+            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+                formatter.write_str("a task name, or a table with task and args")
+            }
+            fn visit_str<E: serde::de::Error>(self, name: &str) -> std::result::Result<Requirement, E> {
+                Ok(Requirement { task: name.to_string(), args: BTreeMap::new() })
+            }
+            fn visit_map<M: serde::de::MapAccess<'de>>(self, map: M) -> std::result::Result<Requirement, M::Error> {
+                #[derive(Deserialize)]
+                #[serde(deny_unknown_fields)]
+                struct Call {
+                    task: String,
+                    #[serde(default)]
+                    args: BTreeMap<String, Given>,
+                }
+                let call = Call::deserialize(serde::de::value::MapAccessDeserializer::new(map))?;
+                Ok(Requirement { task: call.task, args: call.args })
+            }
+        }
+        deserializer.deserialize_any(Visitor)
+    }
+}
+
+impl<'de> Deserialize<'de> for Given {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> std::result::Result<Self, D::Error> {
+        struct Visitor;
+        impl<'de> serde::de::Visitor<'de> for Visitor {
+            type Value = Given;
+            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+                formatter.write_str("a value, true or false for a flag, or { arg = \"<name>\" }")
+            }
+            fn visit_str<E: serde::de::Error>(self, value: &str) -> std::result::Result<Given, E> {
+                Ok(Given::Value(value.to_string()))
+            }
+            fn visit_bool<E: serde::de::Error>(self, on: bool) -> std::result::Result<Given, E> {
+                Ok(Given::Flag(on))
+            }
+            fn visit_map<M: serde::de::MapAccess<'de>>(self, map: M) -> std::result::Result<Given, M::Error> {
+                #[derive(Deserialize)]
+                #[serde(deny_unknown_fields)]
+                struct From {
+                    arg: String,
+                }
+                let from = From::deserialize(serde::de::value::MapAccessDeserializer::new(map))?;
+                Ok(Given::From(from.arg))
+            }
+        }
+        deserializer.deserialize_any(Visitor)
+    }
 }
 
 #[derive(Deserialize, Clone, Debug)]
@@ -244,13 +315,13 @@ pub fn discover(
         tasks.insert(name.clone(), Task { name, declaration, command, source });
     }
     for task in tasks.values() {
-        for required in &task.declaration.requires {
+        for requirement in &task.declaration.requires {
+            let required = &requirement.task;
             let Some(other) = tasks.get(required) else {
                 return Err(setup(format!("{}: requires unknown task {required}", task.name)));
             };
-            if other.declaration.args.iter().any(|arg| arg.required) {
-                return Err(setup(format!("{}: requires {required}, which has a required argument", task.name)));
-            }
+            check_requirement(task, requirement, other)
+                .map_err(|message| setup(format!("{}: {message}", task.name)))?;
             if task.declaration.parallel && !other.declaration.guard {
                 return Err(setup(format!(
                     "{}: runs {required} in parallel, but it has guard = false and needs the terminal",
@@ -265,8 +336,8 @@ pub fn discover(
             return Err(setup(format!("requirement cycle: {}", path.join(" -> "))));
         }
         path.push(name.to_string());
-        for required in &tasks[name].declaration.requires {
-            visit(required, tasks, path)?;
+        for requirement in &tasks[name].declaration.requires {
+            visit(&requirement.task, tasks, path)?;
         }
         path.pop();
         Ok(())
@@ -275,6 +346,119 @@ pub fn discover(
         visit(name, &tasks, &mut Vec::new())?;
     }
     Ok((commands, tasks))
+}
+
+/// What a requirement gives its task must fit that task's arguments, and the requiring task must
+/// have the arguments it passes on; a value passed on is checked against choices when the line runs.
+fn check_requirement(task: &Task, requirement: &Requirement, other: &Task) -> std::result::Result<(), String> {
+    let required = &other.name;
+    for (name, given) in &requirement.args {
+        let Some(arg) = other.declaration.args.iter().find(|arg| &arg.name == name) else {
+            return Err(format!("requires {required} with unknown argument --{name}"));
+        };
+        match given {
+            Given::Value(_) if arg.flag => {
+                return Err(format!("requires {required} with --{name}, a flag: give true or false"));
+            }
+            Given::Value(value) if !arg.choices.is_empty() && !arg.choices.contains(value) => {
+                return Err(format!(
+                    "requires {required} with --{name} {value}, not one of {}",
+                    arg.choices.join(", ")
+                ));
+            }
+            Given::Flag(_) if !arg.flag => {
+                return Err(format!("requires {required} with --{name}, which takes a value, not true or false"));
+            }
+            Given::From(source) => {
+                let Some(own) = task.declaration.args.iter().find(|arg| &arg.name == source) else {
+                    return Err(format!("passes --{source} to {required}, but {} has no such argument", task.name));
+                };
+                if own.flag != arg.flag {
+                    return Err(format!(
+                        "passes --{source} to {required}'s --{name}; one is a flag and the other is not"
+                    ));
+                }
+            }
+            _ => {}
+        }
+    }
+    for arg in &other.declaration.args {
+        if arg.required && !requirement.args.contains_key(&arg.name) {
+            return Err(format!("requires {required} without its required --{}", arg.name));
+        }
+    }
+    Ok(())
+}
+
+/// The arguments a requirement runs its task with, given the requiring task's own.
+fn required_values(
+    requirement: &Requirement,
+    other: &Task,
+    own: &BTreeMap<String, String>,
+) -> std::result::Result<BTreeMap<String, String>, String> {
+    let mut values = BTreeMap::new();
+    for arg in &other.declaration.args {
+        let value = match requirement.args.get(&arg.name) {
+            None => arg.default.clone().unwrap_or_default(),
+            Some(Given::Value(value)) => value.clone(),
+            Some(Given::Flag(on)) => if *on { "1" } else { "" }.to_string(),
+            Some(Given::From(source)) => own.get(source).cloned().unwrap_or_default(),
+        };
+        if requirement.args.contains_key(&arg.name)
+            && !arg.flag
+            && !arg.choices.is_empty()
+            && !arg.choices.contains(&value)
+        {
+            return Err(format!(
+                "{} --{} must be one of {}, not {value:?}",
+                other.name,
+                arg.name,
+                arg.choices.join(", ")
+            ));
+        }
+        values.insert(arg.name.clone(), value);
+    }
+    Ok(values)
+}
+
+/// What makes two runs of a task one run: the task and its arguments. One line, for CAIM_DONE.
+fn run_key(task: &str, values: &BTreeMap<String, String>) -> String {
+    let mut key = task.to_string();
+    for (name, value) in values {
+        key += &format!(" --{name}={}", value.replace('\\', "\\\\").replace('\n', "\\n"));
+    }
+    key
+}
+
+/// The command line that runs a task with these arguments.
+fn command_line(task: &Task, values: &BTreeMap<String, String>) -> Vec<String> {
+    let mut line = vec![task.name.clone()];
+    for arg in &task.declaration.args {
+        let value = values.get(&arg.name).map(String::as_str).unwrap_or_default();
+        if !arg.flag {
+            line.push(format!("--{}={value}", arg.name));
+        } else if !value.is_empty() {
+            line.push(format!("--{}", arg.name));
+        }
+    }
+    line
+}
+
+fn shown_requirement(requirement: &Requirement) -> String {
+    let mut text = requirement.task.clone();
+    for (name, given) in &requirement.args {
+        match given {
+            Given::Value(value) => text += &format!(" --{name} {value}"),
+            Given::Flag(true) => text += &format!(" --{name}"),
+            Given::Flag(false) => {}
+            Given::From(source) => text += &format!(" --{name} <{source}>"),
+        }
+    }
+    text
+}
+
+fn shown_requirements(requires: &[Requirement]) -> String {
+    requires.iter().map(shown_requirement).collect::<Vec<_>>().join(", ")
 }
 
 pub fn parse_args(task: &Task, args: &[String]) -> std::result::Result<BTreeMap<String, String>, String> {
@@ -401,7 +585,7 @@ pub fn usage(task: &Task) -> String {
         facts.push(format!("group {group}"));
     }
     if !task.declaration.requires.is_empty() {
-        facts.push(format!("runs {} first", task.declaration.requires.join(", ")));
+        facts.push(format!("runs {} first", shown_requirements(&task.declaration.requires)));
     }
     if task.declaration.human {
         facts.push("run by a person, not an agent".into());
@@ -426,36 +610,43 @@ fn holding(group: &Concurrency) -> String {
     format!("{} ({mode}, per {})", group.group, group.scope.name())
 }
 
+/// Runs in order: each task with its arguments.
+type Order<'t> = Vec<(&'t Task, BTreeMap<String, String>)>;
+
 /// The tasks a line runs, in the order the runner would run them: each task's requirements first,
-/// with their defaults, and no task twice.
+/// with the arguments they are given, and no task twice with the same arguments. Fails on a passed
+/// value its task does not accept, before anything runs.
 fn plan<'t>(
     tasks: &'t BTreeMap<String, Task>,
     runs: &[(&'t Task, BTreeMap<String, String>)],
-) -> Vec<(&'t Task, BTreeMap<String, String>)> {
+) -> std::result::Result<Order<'t>, String> {
     fn visit<'t>(
         tasks: &'t BTreeMap<String, Task>,
         task: &'t Task,
         values: BTreeMap<String, String>,
         done: &mut BTreeSet<String>,
-        order: &mut Vec<(&'t Task, BTreeMap<String, String>)>,
-    ) {
-        for required in &task.declaration.requires {
-            if !done.contains(required) {
-                let other = &tasks[required];
-                visit(tasks, other, parse_args(other, &[]).unwrap_or_default(), done, order);
-            }
+        order: &mut Order<'t>,
+    ) -> std::result::Result<(), String> {
+        let key = run_key(&task.name, &values);
+        if done.contains(&key) {
+            return Ok(());
         }
-        done.insert(task.name.clone());
+        for requirement in &task.declaration.requires {
+            let other = &tasks[&requirement.task];
+            let required =
+                required_values(requirement, other, &values).map_err(|message| format!("{}: {message}", task.name))?;
+            visit(tasks, other, required, done, order)?;
+        }
+        done.insert(key);
         order.push((task, values));
+        Ok(())
     }
     let mut done = BTreeSet::new();
     let mut order = Vec::new();
     for (task, values) in runs {
-        if !done.contains(&task.name) {
-            visit(tasks, task, values.clone(), &mut done, &mut order);
-        }
+        visit(tasks, task, values.clone(), &mut done, &mut order)?;
     }
-    order
+    Ok(order)
 }
 
 fn shown_command(run: &Run) -> String {
@@ -503,7 +694,7 @@ fn dry_run(order: &[(&Task, BTreeMap<String, String>)]) -> i32 {
             println!("  stall guard: off");
         }
         if declaration.parallel && !declaration.requires.is_empty() {
-            println!("  runs its requirements in parallel: {}", declaration.requires.join(", "));
+            println!("  runs its requirements in parallel: {}", shown_requirements(&declaration.requires));
         }
     }
     OK
@@ -633,12 +824,19 @@ pub fn main(args: &[String]) -> i32 {
                     }
                 }
             }
+            let order = match plan(&tasks, &runs) {
+                Ok(order) => order,
+                Err(message) => {
+                    eprintln!("{message}");
+                    return USAGE;
+                }
+            };
             if named.dry_run {
-                return dry_run(&plan(&tasks, &runs));
+                return dry_run(&order);
             }
             let mut runner = Runner::new(root, project, hooks, &tasks);
             for (task, values) in runs {
-                if runner.done.contains(&task.name) {
+                if runner.done.contains(&run_key(&task.name, &values)) {
                     continue;
                 }
                 let status = runner.run(task, &values);
@@ -840,22 +1038,30 @@ impl<'a> Runner<'a> {
 
     /// The tasks a parallel task requires, each run by a caim of its own with its output's lines
     /// prefixed by its name. What those tasks require in turn runs here first, once.
-    fn run_parallel(&mut self, task: &Task) -> std::result::Result<(), (String, i32)> {
-        let pending: Vec<&Task> = task
-            .declaration
-            .requires
-            .iter()
-            .filter(|required| !self.done.contains(*required))
-            .map(|required| &self.tasks[required])
-            .collect();
-        let direct: BTreeSet<&str> = pending.iter().map(|other| other.name.as_str()).collect();
-        for other in &pending {
+    fn run_parallel(
+        &mut self,
+        task: &Task,
+        values: &BTreeMap<String, String>,
+    ) -> std::result::Result<(), (String, i32)> {
+        let tasks = self.tasks;
+        let mut pending: Vec<(&Task, BTreeMap<String, String>, String)> = Vec::new();
+        for requirement in &task.declaration.requires {
+            let other = &tasks[&requirement.task];
+            let required = self.required(task, requirement, other, values)?;
+            let key = run_key(&other.name, &required);
+            if !self.done.contains(&key) && !pending.iter().any(|(_, _, seen)| *seen == key) {
+                pending.push((other, required, key));
+            }
+        }
+        for (other, other_values, _) in &pending {
             for deeper in &other.declaration.requires {
-                if direct.contains(deeper.as_str()) || self.done.contains(deeper) {
+                let required_task = &tasks[&deeper.task];
+                let required = self.required(other, deeper, required_task, other_values)?;
+                let key = run_key(&required_task.name, &required);
+                if pending.iter().any(|(_, _, direct)| *direct == key) || self.done.contains(&key) {
                     continue;
                 }
-                let required = &self.tasks[deeper];
-                let status = self.run(required, &parse_args(required, &[]).unwrap_or_default());
+                let status = self.run(required_task, &required);
                 if status != OK {
                     return Err((other.name.clone(), status));
                 }
@@ -864,9 +1070,9 @@ impl<'a> Runner<'a> {
         let executable = std::env::current_exe().map_err(|_| (task.name.clone(), FAILED))?;
         let done: Vec<String> = self.done.iter().cloned().collect();
         let mut running = Vec::new();
-        for other in &pending {
+        for (other, other_values, key) in &pending {
             let child = Command::new(&executable)
-                .arg(&other.name)
+                .args(command_line(other, other_values))
                 .env("CAIM_ROOT", &self.root)
                 .env(DONE, done.join("\n"))
                 .stdin(Stdio::null())
@@ -883,10 +1089,10 @@ impl<'a> Runner<'a> {
             let prefix = format!("[{}] ", other.name);
             let stdout = child.stdout.take().map(|pipe| prefixed(pipe, prefix.clone(), false));
             let stderr = child.stderr.take().map(|pipe| prefixed(pipe, prefix, true));
-            running.push((other.name.clone(), child, stdout, stderr));
+            running.push((other.name.clone(), key.clone(), child, stdout, stderr));
         }
         let mut failed = None;
-        for (name, mut child, stdout, stderr) in running {
+        for (name, key, mut child, stdout, stderr) in running {
             let status = child.wait().map_or(FAILED, |status| {
                 status
                     .code()
@@ -895,12 +1101,26 @@ impl<'a> Runner<'a> {
             for reader in [stdout, stderr].into_iter().flatten() {
                 let _ = reader.join();
             }
-            self.done.insert(name.clone());
+            self.done.insert(key);
             if status != OK && failed.is_none() {
                 failed = Some((name, status));
             }
         }
         failed.map_or(Ok(()), Err)
+    }
+
+    /// The arguments a requirement gets; the line's plan has already checked them.
+    fn required(
+        &self,
+        task: &Task,
+        requirement: &Requirement,
+        other: &Task,
+        values: &BTreeMap<String, String>,
+    ) -> std::result::Result<BTreeMap<String, String>, (String, i32)> {
+        required_values(requirement, other, values).map_err(|message| {
+            self.out.borrow().message(&format!("{}: {message}", task.name));
+            (other.name.clone(), USAGE)
+        })
     }
 
     fn set_held(&self) {
@@ -943,24 +1163,25 @@ impl<'a> Runner<'a> {
     fn run(&mut self, task: &Task, values: &BTreeMap<String, String>) -> i32 {
         let name = &task.name;
         if task.declaration.parallel
-            && let Err((required, status)) = self.run_parallel(task)
+            && let Err((required, status)) = self.run_parallel(task, values)
         {
             self.out.borrow().ended(name, status, &Reason::Required(required));
             return status;
         }
-        for required in &task.declaration.requires {
-            if self.done.contains(required) {
-                continue;
-            }
-            let other = &self.tasks[required];
-            let defaults = parse_args(other, &[]).unwrap_or_default();
-            let status = self.run(other, &defaults);
+        let tasks = self.tasks;
+        for requirement in &task.declaration.requires {
+            let other = &tasks[&requirement.task];
+            let status = match self.required(task, requirement, other, values) {
+                Ok(required) if self.done.contains(&run_key(&other.name, &required)) => continue,
+                Ok(required) => self.run(other, &required),
+                Err((_, status)) => status,
+            };
             if status != OK {
-                self.out.borrow().ended(name, status, &Reason::Required(required.clone()));
+                self.out.borrow().ended(name, status, &Reason::Required(other.name.clone()));
                 return status;
             }
         }
-        self.done.insert(name.clone());
+        self.done.insert(run_key(name, values));
 
         let acquired = concurrency::acquire(
             &task.declaration.concurrency,
