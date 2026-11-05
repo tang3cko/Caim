@@ -1,0 +1,45 @@
+#!/usr/bin/env bash
+# THIRD_PARTY_LICENSES for a target: the license files of every crate a release build links, from
+# `cargo tree` and the crate sources in Cargo's cache. Exits 1 when a crate's license is outside
+# ALLOWED or it ships no license file.
+set -euo pipefail
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+TARGET="${1:-${CAIM_ARG_TARGET:-}}"
+[[ -n "$TARGET" ]] || { echo "usage: tasks/licenses TARGET" >&2; exit 64; }
+ALLOWED=" MIT Apache-2.0 Unlicense Unicode-3.0 "
+SOURCES="${CARGO_HOME:-$HOME/.cargo}/registry/src"
+
+# Normal dependencies only: build and dev dependencies are not in the binary.
+crates="$(cargo tree --manifest-path "$ROOT/Cargo.toml" --locked -e normal --target "$TARGET" \
+  --prefix none --format '{p}|{l}' | sed -E 's/ \((\*|proc-macro)\)//g' | grep -v '^caim ' | LC_ALL=C sort -u)"
+
+failed=0
+echo "caim links the crates below. Each is listed with its license and the license files it ships."
+while IFS='|' read -r package license; do
+  name="${package%% *}"
+  version="${package#* v}"
+  for id in $(tr '()' '  ' <<< "$license"); do
+    case "$id" in OR | AND | WITH) continue ;; esac
+    if [[ "$ALLOWED" != *" $id "* ]]; then
+      echo "tasks/licenses: $name $version is under $id, which is not allowed" >&2
+      failed=1
+    fi
+  done
+  directory="$(find "$SOURCES" -mindepth 2 -maxdepth 2 -type d -name "$name-$version" | head -n 1)"
+  files=""
+  if [[ -n "$directory" ]]; then
+    files="$(find "$directory" -maxdepth 1 -type f \( -iname 'LICENSE*' -o -iname 'LICENCE*' \
+      -o -iname 'COPYING*' -o -iname 'UNLICENSE*' -o -iname 'NOTICE*' \) | LC_ALL=C sort)"
+  fi
+  if [[ -z "$files" ]]; then
+    echo "tasks/licenses: $name $version ships no license file" >&2
+    failed=1
+  fi
+  printf '\n%s\n%s %s: %s\n%s\n' "$(printf '=%.0s' {1..80})" "$name" "$version" "$license" "$(printf '=%.0s' {1..80})"
+  while IFS= read -r file; do
+    [[ -n "$file" ]] || continue
+    printf '\n--- %s\n\n' "${file##*/}"
+    cat "$file"
+  done <<< "$files"
+done <<< "$crates"
+exit "$failed"

@@ -100,6 +100,7 @@ jobs:
           name="caim-v$VERSION-$PLATFORM"
           mkdir -p "dist/$name"
           cp "target/$TARGET/release/caim" README.md LICENSE-MIT LICENSE-APACHE "dist/$name/"
+          tasks/licenses "$TARGET" > "dist/$name/THIRD_PARTY_LICENSES"
           tar -C dist -czf "dist/$name.tar.gz" "$name"
           rm -r "dist/$name"
 
