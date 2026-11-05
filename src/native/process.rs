@@ -6,8 +6,8 @@ use crate::progress::Written;
 use std::collections::BTreeSet;
 use std::ffi::CString;
 use std::fs;
-use std::io::{self, Write};
-use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
+use std::io::{self, IsTerminal, Write};
+use std::os::fd::{AsRawFd, OwnedFd};
 use std::os::unix::ffi::OsStrExt;
 
 fn remaining(group: i32, pids: &[i32]) -> Result<BTreeSet<i32>> {
@@ -163,17 +163,9 @@ pub(super) fn cstring(text: &str) -> Result<CString> {
 }
 
 fn output_pipe() -> Result<(OwnedFd, OwnedFd)> {
-    let mut fds = [0; 2];
-    if unsafe { libc::pipe(fds.as_mut_ptr()) } < 0 {
-        return Err(Error::os("create the output pipe"));
-    }
-    let (read, write) = unsafe { (OwnedFd::from_raw_fd(fds[0]), OwnedFd::from_raw_fd(fds[1])) };
-    let set = unsafe {
-        libc::fcntl(read.as_raw_fd(), libc::F_SETFD, libc::FD_CLOEXEC) == 0
-            && libc::fcntl(write.as_raw_fd(), libc::F_SETFD, libc::FD_CLOEXEC) == 0
-            && libc::fcntl(read.as_raw_fd(), libc::F_SETFL, libc::O_NONBLOCK) == 0
-    };
-    if !set {
+    let (read, write) = std::io::pipe().map_err(|error| Error::io("create the output pipe", error))?;
+    let (read, write) = (OwnedFd::from(read), OwnedFd::from(write));
+    if unsafe { libc::fcntl(read.as_raw_fd(), libc::F_SETFL, libc::O_NONBLOCK) } != 0 {
         return Err(Error::os("prepare the output pipe"));
     }
     Ok((read, write))
@@ -269,7 +261,7 @@ pub(super) struct Job {
 impl Job {
     fn new(pid: i32, inherit: bool) -> Self {
         let mut job = Job { pid, terminal: None, command_modes: None };
-        if !inherit || unsafe { libc::isatty(0) } != 1 {
+        if !inherit || !std::io::stdin().is_terminal() {
             return job;
         }
         let own = unsafe { libc::getpgrp() };
@@ -322,7 +314,7 @@ impl Job {
             libc::sigaddset(&mut only, signal);
             let before = libc::signal(signal, libc::SIG_DFL);
             libc::pthread_sigmask(libc::SIG_UNBLOCK, &only, &mut mask);
-            libc::kill(libc::getpid(), signal);
+            libc::kill(std::process::id() as libc::pid_t, signal);
             libc::pthread_sigmask(libc::SIG_SETMASK, &mask, std::ptr::null_mut());
             libc::signal(signal, before);
         }

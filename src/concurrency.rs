@@ -5,7 +5,6 @@ use serde::Deserialize;
 use serde::de::{self, Deserializer, MapAccess, SeqAccess, Visitor};
 use std::fs::{self, File};
 use std::io::{Read, Write};
-use std::os::fd::AsRawFd;
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
 
@@ -233,15 +232,22 @@ fn open(path: &Path) -> Result<File> {
         .map_err(|error| Error::io(format!("open {}", path.display()), error))
 }
 
-fn try_lock(file: &File, operation: libc::c_int) -> Result<bool> {
-    if unsafe { libc::flock(file.as_raw_fd(), operation | libc::LOCK_NB) } == 0 {
-        return Ok(true);
+#[derive(Clone, Copy)]
+enum Lock {
+    Exclusive,
+    Shared,
+}
+
+fn try_lock(file: &File, lock: Lock) -> Result<bool> {
+    let taken = match lock {
+        Lock::Exclusive => file.try_lock(),
+        Lock::Shared => file.try_lock_shared(),
+    };
+    match taken {
+        Ok(()) => Ok(true),
+        Err(fs::TryLockError::WouldBlock) => Ok(false),
+        Err(fs::TryLockError::Error(error)) => Err(Error::io("lock a concurrency group", error)),
     }
-    let error = std::io::Error::last_os_error();
-    if error.raw_os_error() == Some(libc::EWOULDBLOCK) {
-        return Ok(false);
-    }
-    Err(Error::io("lock a concurrency group", error))
 }
 
 struct Intent {
@@ -303,7 +309,7 @@ impl Group {
     fn intend(&self) -> Result<Intent> {
         let path = self.directory.join(format!("holders/.{}", std::process::id()));
         let file = open(&path)?;
-        try_lock(&file, libc::LOCK_EX)?;
+        try_lock(&file, Lock::Exclusive)?;
         Ok(Intent { path, file: Some(file) })
     }
 
@@ -332,13 +338,13 @@ impl Group {
         let mut locks = Vec::new();
         match self.concurrency.mode {
             Mode::Exclusive => {
-                if !try_lock(&gate, libc::LOCK_EX)? {
+                if !try_lock(&gate, Lock::Exclusive)? {
                     return Ok(None);
                 }
                 locks.push(gate);
             }
             Mode::Shared => {
-                if !try_lock(&gate, libc::LOCK_SH)? {
+                if !try_lock(&gate, Lock::Shared)? {
                     return Ok(None);
                 }
                 locks.push(gate);
@@ -346,7 +352,7 @@ impl Group {
                     let mut slot = None;
                     for index in 0..limit {
                         let file = open(&self.directory.join(format!("slot-{index}")))?;
-                        if try_lock(&file, libc::LOCK_EX)? {
+                        if try_lock(&file, Lock::Exclusive)? {
                             slot = Some(file);
                             break;
                         }
@@ -388,7 +394,7 @@ impl Group {
                 continue;
             }
             let Ok(mut file) = fs::File::open(entry.path()) else { continue };
-            if try_lock(&file, libc::LOCK_SH).unwrap_or(false) {
+            if try_lock(&file, Lock::Shared).unwrap_or(false) {
                 let _ = fs::remove_file(entry.path());
                 continue;
             }
