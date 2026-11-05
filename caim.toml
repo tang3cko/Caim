@@ -49,6 +49,11 @@ name = "clippy"
 help = "run clippy there instead of a task"
 flag = true
 
+[tasks.crate-check-test]
+description = "tasks/crate-check against real and tampered crates; it downloads them, so run it through linux"
+group = "check"
+run = ["tests/crate-check/crate_check_test.sh"]
+
 [tasks.check]
 description = "Everything CI checks: lint, test, launcher and terminal"
 group = "check"

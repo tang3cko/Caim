@@ -1,0 +1,135 @@
+#!/usr/bin/env bash
+# Checks every crates.io package that HEAD_LOCK adds or moves relative to BASE_LOCK, without building it.
+#   OK      the .crate matches its Cargo.lock checksum, and its files equal the upstream commit that its
+#           .cargo_vcs_info.json names, which a tag points at.
+#   REVIEW  that holds, but a person should look first: the package is new to Cargo.lock, it gained a
+#           build script or became a proc macro, or it is not from crates.io.
+#   FAIL    any of the above does not hold.
+# Exits 1 unless every line is OK. crates.io lets a publisher upload files that are not in the repository,
+# and a build script or proc macro runs as soon as cargo builds; this is what a pull request cannot show.
+# CRATE_CHECK_DOWNLOADS names a directory of <name>-<version>.crate files to use instead of downloading,
+# for the tests.
+set -uo pipefail
+BASE_LOCK="${1:-}"
+HEAD_LOCK="${2:-Cargo.lock}"
+[[ -f "$BASE_LOCK" && -f "$HEAD_LOCK" ]] || { echo "usage: tasks/crate-check BASE_LOCK [HEAD_LOCK]" >&2; exit 64; }
+REGISTRY="registry+https://github.com/rust-lang/crates.io-index"
+WORK="$(mktemp -d "${TMPDIR:-/tmp}/crate-check.XXXXXX")"
+trap 'rm -rf "$WORK"' EXIT
+
+# One "name version source checksum" line per package; "-" for a missing field.
+packages() {
+  awk '
+    function flush() { if (name != "") print name, version, (source == "" ? "-" : source), (sum == "" ? "-" : sum) }
+    /^\[\[package\]\]$/ { flush(); name = version = source = sum = ""; next }
+    /^name = /     { name = $3 }
+    /^version = /  { version = $3 }
+    /^source = /   { source = $3 }
+    /^checksum = / { sum = $3 }
+    END { flush() }
+  ' "$1" | tr -d '"'
+}
+
+sha256() {
+  if command -v sha256sum > /dev/null; then sha256sum "$1" | cut -d' ' -f1; else shasum -a 256 "$1" | cut -d' ' -f1; fi
+}
+
+# Unpacks name-version into $WORK/<tag>/ after checking its sha256; prints the unpacked directory.
+unpack() {
+  local name="$1" version="$2" sum="$3" tag="$4" file
+  mkdir -p "$WORK/$tag"
+  file="$WORK/$tag/$name-$version.crate"
+  if [[ -n "${CRATE_CHECK_DOWNLOADS:-}" && -f "$CRATE_CHECK_DOWNLOADS/$name-$version.crate" ]]; then
+    cp "$CRATE_CHECK_DOWNLOADS/$name-$version.crate" "$file"
+  elif ! curl -fsSL --retry 3 -o "$file" "https://static.crates.io/crates/$name/$name-$version.crate"; then
+    echo "download failed"
+    return 1
+  fi
+  if [[ "$(sha256 "$file")" != "$sum" ]]; then
+    echo "sha256 differs from Cargo.lock"
+    return 1
+  fi
+  tar -xzf "$file" -C "$WORK/$tag" || { echo "not a gzipped tarball"; return 1; }
+  [[ -d "$WORK/$tag/$name-$version" ]] || { echo "no $name-$version/ inside"; return 1; }
+  echo "$WORK/$tag/$name-$version"
+}
+
+json_field() { sed -nE "s/.*\"$2\": *\"?([^\",}]*)\"?.*/\1/p" "$1" | head -n 1; }
+has_build_script() { [[ -f "$1/build.rs" ]] || grep -qE '^build = "' "$1/Cargo.toml"; }
+is_proc_macro() { grep -qE '^proc-macro = true' "$1/Cargo.toml"; }
+
+# Prints the problems with an unpacked crate against its upstream commit, one per line; none means it matches.
+upstream_problems() {
+  local root="$1" key="$2" info sha1 sub dirty repository up tags file source
+  info="$root/.cargo_vcs_info.json"
+  [[ -f "$info" ]] || { echo "no .cargo_vcs_info.json, so no commit to compare with"; return; }
+  sha1="$(json_field "$info" sha1)"
+  sub="$(json_field "$info" path_in_vcs)"
+  dirty="$(json_field "$info" dirty)"
+  [[ "$sha1" =~ ^[0-9a-f]{40}$ ]] || { echo "no commit in .cargo_vcs_info.json"; return; }
+  [[ "$dirty" == true ]] && echo "published from a working tree with uncommitted changes"
+  repository="$(sed -nE 's/^repository = "([^"]*)"$/\1/p' "$root/Cargo.toml" | head -n 1)"
+  repository="${repository%/}"
+  repository="${repository%.git}"
+  [[ "$repository" == https://* ]] || { echo "no https repository in Cargo.toml"; return; }
+  up="$WORK/upstream-$key"
+  if ! { git init -q "$up" && git -C "$up" fetch -q --depth 1 "$repository" "$sha1" && git -C "$up" checkout -q FETCH_HEAD; } 2> /dev/null; then
+    echo "commit ${sha1:0:12} not found in $repository"
+    return
+  fi
+  tags="$(git ls-remote --tags "$repository" 2> /dev/null | awk -v sha="$sha1" '$1 == sha { sub("refs/tags/", "", $2); sub(/\^\{\}$/, "", $2); print $2 }' | sort -u | tr '\n' ' ')"
+  [[ -n "$tags" ]] || echo "no tag points at commit ${sha1:0:12}"
+  while IFS= read -r file; do
+    case "$file" in .cargo_vcs_info.json | Cargo.toml | Cargo.lock) continue ;; esac
+    source="$up/${sub:+$sub/}$file"
+    [[ "$file" == Cargo.toml.orig ]] && source="$up/${sub:+$sub/}Cargo.toml"
+    if [[ ! -f "$source" ]]; then
+      echo "$file is not in $repository at ${sha1:0:12}"
+    elif ! cmp -s "$root/$file" "$source"; then
+      echo "$file differs from $repository at ${sha1:0:12}"
+    fi
+  done < <(cd "$root" && find . -type f | sed 's#^\./##' | LC_ALL=C sort)
+}
+
+packages "$BASE_LOCK" > "$WORK/base"
+packages "$HEAD_LOCK" > "$WORK/head"
+changed="$(awk 'NR == FNR { seen[$1 " " $2 " " $3] = 1; next } !(($1 " " $2 " " $3) in seen) && $3 != "-"' "$WORK/base" "$WORK/head")"
+if [[ -z "$changed" ]]; then
+  echo "no crates.io package changed"
+  exit 0
+fi
+
+failed=0
+n=0
+while read -r name version source sum; do
+  n=$((n + 1))
+  fails=() reviews=()
+  if [[ "$source" != "$REGISTRY" ]]; then
+    reviews+=("not from crates.io: $source")
+  else
+    previous="$(awk -v name="$name" -v registry="$REGISTRY" '$1 == name && $3 == registry { print $2, $4 }' "$WORK/base" | sort -V | tail -n 1)"
+    if root="$(unpack "$name" "$version" "$sum" "new-$n")"; then
+      while IFS= read -r problem; do [[ -n "$problem" ]] && fails+=("$problem"); done < <(upstream_problems "$root" "$n")
+      if [[ -z "$previous" ]]; then
+        reviews+=("new to Cargo.lock")
+      elif old="$(unpack "$name" "${previous% *}" "${previous#* }" "old-$n")"; then
+        has_build_script "$root" && ! has_build_script "$old" && reviews+=("gained a build script since ${previous% *}")
+        is_proc_macro "$root" && ! is_proc_macro "$old" && reviews+=("became a proc macro since ${previous% *}")
+      else
+        fails+=("${previous% *} from the base Cargo.lock: $old")
+      fi
+    else
+      fails+=("$root")
+    fi
+  fi
+  if ((${#fails[@]})); then
+    failed=1
+    printf 'FAIL %s %s: %s\n' "$name" "$version" "$(printf '%s; ' "${fails[@]}" "${reviews[@]}" | sed 's/; $//')"
+  elif ((${#reviews[@]})); then
+    failed=1
+    printf 'REVIEW %s %s: %s\n' "$name" "$version" "$(printf '%s; ' "${reviews[@]}" | sed 's/; $//')"
+  else
+    echo "OK $name $version"
+  fi
+done <<< "$changed"
+exit "$failed"

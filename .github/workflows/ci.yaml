@@ -43,7 +43,7 @@ jobs:
         run: cargo clippy --locked --all-targets -- -D warnings
 
       - name: Shellcheck
-        run: shellcheck caim tests/launcher/launcher_test.sh tests/terminal/job_control_test.sh tasks/*
+        run: shellcheck caim tests/launcher/launcher_test.sh tests/terminal/job_control_test.sh tests/crate-check/crate_check_test.sh tasks/*
 
       - name: actionlint
         run: actionlint
@@ -86,10 +86,31 @@ jobs:
       - name: Terminal job control tests
         run: bash tests/terminal/job_control_test.sh
 
+  # A dependency update shows only versions and checksums in its diff. This checks what it pulls in.
+  crate-check:
+    name: Crate check
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Check the changed crates
+        env:
+          BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          git show "$BASE:Cargo.lock" > "$RUNNER_TEMP/base.lock"
+          tasks/crate-check "$RUNNER_TEMP/base.lock" Cargo.lock
+
   ci-result:
     name: CI Result
     if: always()
-    needs: [lint, test]
+    needs: [lint, test, crate-check]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions: {}
