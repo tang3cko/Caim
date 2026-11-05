@@ -32,6 +32,10 @@ jobs:
       - name: Set up mise
         uses: jdx/mise-action@6be3c7ed4c21d4f76b208d351d95aac273ebb76d # v5.2.4
 
+      - name: Report on rustup
+        if: failure() && runner.os == 'macOS'
+        run: tasks/rustup-report
+
       - name: Format
         run: cargo fmt --check
 
@@ -62,6 +66,10 @@ jobs:
 
       - name: Set up mise
         uses: jdx/mise-action@6be3c7ed4c21d4f76b208d351d95aac273ebb76d # v5.2.4
+
+      - name: Report on rustup
+        if: failure() && runner.os == 'macOS'
+        run: tasks/rustup-report
 
       - name: Install zsh and expect
         if: runner.os == 'Linux'
