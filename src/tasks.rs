@@ -86,7 +86,6 @@ pub struct Requirement {
     pub args: BTreeMap<String, Given>,
 }
 
-/// What a requirement gives one argument of its task.
 #[derive(Clone, Debug)]
 pub enum Given {
     Value(String),
@@ -390,7 +389,6 @@ fn check_requirement(task: &Task, requirement: &Requirement, other: &Task) -> st
     Ok(())
 }
 
-/// The arguments a requirement runs its task with, given the requiring task's own.
 fn required_values(
     requirement: &Requirement,
     other: &Task,
@@ -430,7 +428,6 @@ fn run_key(task: &str, values: &BTreeMap<String, String>) -> String {
     key
 }
 
-/// The command line that runs a task with these arguments.
 fn command_line(task: &Task, values: &BTreeMap<String, String>) -> Vec<String> {
     let mut line = vec![task.name.clone()];
     for arg in &task.declaration.args {
@@ -610,7 +607,6 @@ fn holding(group: &Concurrency) -> String {
     format!("{} ({mode}, per {})", group.group, group.scope.name())
 }
 
-/// Runs in order: each task with its arguments.
 type Order<'t> = Vec<(&'t Task, BTreeMap<String, String>)>;
 
 /// The tasks a line runs, in the order the runner would run them: each task's requirements first,
