@@ -1,5 +1,3 @@
-//! `caim --init`: a caim.toml to start from, with every key a task can take in a commented reference.
-
 use crate::error::{CANT_CREATE, FAILED, OK, USAGE};
 use crate::tasks::{PROJECT_FILE, valid_name};
 use std::fs::OpenOptions;
@@ -88,7 +86,6 @@ pub fn dispatch(args: &[String]) -> i32 {
     }
 }
 
-/// The directory's name as a project name: lowercase letters, digits and dashes, starting with a letter.
 fn name_for(directory: &Path) -> String {
     let raw = directory.file_name().map(|name| name.to_string_lossy().to_lowercase()).unwrap_or_default();
     let mut name = String::new();
