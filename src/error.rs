@@ -4,6 +4,7 @@ use std::io;
 // caim's own statuses stay clear of the 1 and 2 most commands use: sysexits(3) and timeout(1)'s.
 pub const OK: i32 = 0;
 pub const USAGE: i32 = 64;
+pub const CANT_CREATE: i32 = 73;
 pub const BUSY: i32 = 75;
 pub const CONFIG: i32 = 78;
 pub const STALLED: i32 = 124;

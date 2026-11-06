@@ -720,7 +720,7 @@ fn list(tasks: &BTreeMap<String, Task>) -> i32 {
 }
 
 fn general_usage() -> &'static str {
-    "usage: caim list | caim [--help] [--dry-run] <task> [--name value ...] [<task> [--name value ...] ...]"
+    "usage: caim list | caim --init | caim [--help] [--dry-run] <task> [--name value ...] [<task> [--name value ...] ...]"
 }
 
 pub const PROJECT_FILE: &str = "caim.toml";

@@ -2,6 +2,7 @@ pub mod completions;
 pub mod concurrency;
 pub mod digests;
 pub mod error;
+pub mod init;
 pub mod native;
 pub mod progress;
 pub mod sha256;

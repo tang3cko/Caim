@@ -1,5 +1,5 @@
 use caim::error::{Error, FAILED, USAGE};
-use caim::{completions, digests, tasks, waits};
+use caim::{completions, digests, init, tasks, waits};
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -29,6 +29,8 @@ fn main() {
         }
     } else if args.first().is_some_and(|mode| mode == completions::MODE) {
         completions::dispatch(&args)
+    } else if args.first().is_some_and(|mode| mode == init::FLAG) {
+        init::dispatch(&args)
     } else {
         tasks::main(&args)
     };
