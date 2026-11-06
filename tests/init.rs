@@ -37,7 +37,6 @@ fn the_commented_reference_in_an_initialized_file_is_valid() {
     fs::create_dir(&dir).unwrap();
     assert_eq!(init(&dir, &[]).0, 0);
 
-    // Lines of the reference are commented with "# "; prose is commented with "##".
     let written = fs::read_to_string(dir.join("caim.toml")).unwrap();
     let uncommented: String = written
         .lines()

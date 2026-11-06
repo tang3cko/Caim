@@ -79,7 +79,6 @@ pub struct Declaration {
     pub parallel: bool,
 }
 
-/// A task to run first: a name, or `{ task, args }` with some of its arguments given.
 #[derive(Clone, Debug)]
 pub struct Requirement {
     pub task: String,
@@ -347,8 +346,6 @@ pub fn discover(
     Ok((commands, tasks))
 }
 
-/// What a requirement gives its task must fit that task's arguments, and the requiring task must
-/// have the arguments it passes on; a value passed on is checked against choices when the line runs.
 fn check_requirement(task: &Task, requirement: &Requirement, other: &Task) -> std::result::Result<(), String> {
     let required = &other.name;
     for (name, given) in &requirement.args {
@@ -609,9 +606,6 @@ fn holding(group: &Concurrency) -> String {
 
 type Order<'t> = Vec<(&'t Task, BTreeMap<String, String>)>;
 
-/// The tasks a line runs, in the order the runner would run them: each task's requirements first,
-/// with the arguments they are given, and no task twice with the same arguments. Fails on a passed
-/// value its task does not accept, before anything runs.
 fn plan<'t>(
     tasks: &'t BTreeMap<String, Task>,
     runs: &[(&'t Task, BTreeMap<String, String>)],
@@ -1032,8 +1026,6 @@ impl<'a> Runner<'a> {
         Runner { root, project, hooks, tasks, done, out: RefCell::new(Out { ended_line: true }), held }
     }
 
-    /// The tasks a parallel task requires, each run by a caim of its own with its output's lines
-    /// prefixed by its name. What those tasks require in turn runs here first, once.
     fn run_parallel(
         &mut self,
         task: &Task,
