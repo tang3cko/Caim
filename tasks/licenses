@@ -1,7 +1,4 @@
 #!/usr/bin/env bash
-# THIRD_PARTY_LICENSES for a target: the license files of every crate a release build links, from
-# `cargo tree` and the crate sources in Cargo's cache. Exits 1 when a crate's license is outside
-# ALLOWED or it ships no license file.
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TARGET="${1:-${CAIM_ARG_TARGET:-}}"

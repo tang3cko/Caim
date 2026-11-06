@@ -1,6 +1,4 @@
 #!/usr/bin/env bash
-# For a CI step that failed setting up Rust on macOS: what each rustup on PATH is, whether its code
-# signature holds, and what the kernel logged about killing it.
 set -uo pipefail
 for rustup in /opt/homebrew/opt/rustup/bin/rustup "$HOME/.cargo/bin/rustup"; do
   [[ -e "$rustup" ]] || continue

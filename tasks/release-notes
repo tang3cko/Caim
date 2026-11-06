@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-# Release notes for a tag, from the Conventional Commits since the tag before it.
 set -euo pipefail
 TAG="${1:-${CAIM_ARG_TAG:-}}"
 [[ -n "$TAG" ]] || { echo "usage: tasks/release-notes TAG" >&2; exit 64; }
