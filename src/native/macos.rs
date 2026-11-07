@@ -2,8 +2,9 @@ use super::events::{Event, Interest, TERMINATION, Token, ignore, monotonic};
 use super::process::{RunPlan, cstring};
 use crate::error::{Error, Result};
 use std::ffi::CString;
+use std::fs::File;
 use std::io;
-use std::os::fd::{AsRawFd, FromRawFd, OwnedFd, RawFd};
+use std::os::fd::{AsFd, AsRawFd, FromRawFd, OwnedFd, RawFd};
 use std::os::unix::ffi::OsStrExt;
 use std::path::Path;
 
@@ -85,6 +86,12 @@ impl Queue {
 
     pub fn watch(&self, path: &Path, follow: bool, interest: Interest) -> io::Result<Watch> {
         let fd = open_event_only(path, follow)?;
+        self.add(fd.as_raw_fd() as usize, libc::EVFILT_VNODE, vnode_flags(interest))?;
+        Ok(Watch { fd })
+    }
+
+    pub fn watch_file(&self, file: &File, interest: Interest) -> io::Result<Watch> {
+        let fd = file.as_fd().try_clone_to_owned()?;
         self.add(fd.as_raw_fd() as usize, libc::EVFILT_VNODE, vnode_flags(interest))?;
         Ok(Watch { fd })
     }

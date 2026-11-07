@@ -186,6 +186,10 @@ impl Queue {
         Ok(Watch { inotify, descriptor, token })
     }
 
+    pub fn watch_file(&self, file: &fs::File, interest: Interest) -> io::Result<Watch> {
+        self.watch(Path::new(&format!("/proc/self/fd/{}", file.as_raw_fd())), true, interest)
+    }
+
     pub fn readable(&self, fd: RawFd) -> Result<()> {
         self.add(fd, READABLE | fd as u64).map_err(|error| Error::io("register pipe", error))
     }
