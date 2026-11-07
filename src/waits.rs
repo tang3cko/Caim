@@ -7,7 +7,6 @@ use regex::bytes::Regex;
 use std::collections::BTreeSet;
 use std::fs::File;
 use std::io::{self, Read};
-use std::path::Path;
 
 pub const MODES: &[&str] = &["exit", "first-exit", "written", "line", "activity", "run", "stop"];
 
@@ -54,9 +53,8 @@ fn wait_exit(pids: &[i32], guard: Option<f64>, first: bool) -> Result<i32> {
 fn wait_written(path: &str, guard: Option<f64>) -> Result<i32> {
     let file = File::open(path).map_err(|error| Error::io(format!("open {path}"), error))?;
     let queue = Queue::new()?;
-    let _watch = queue
-        .watch(Path::new(path), true, Interest::Written)
-        .map_err(|error| Error::io(format!("open {path}"), error))?;
+    let _watch =
+        queue.watch_file(&file, Interest::Written).map_err(|error| Error::io(format!("watch {path}"), error))?;
     loop {
         let size = file.metadata().map_err(|error| Error::io(format!("fstat {path}"), error))?.len();
         if size > 0 {
@@ -125,8 +123,8 @@ fn wait_line(mut watches: Vec<LineWatch>, pids: &[i32], guard: Option<f64>) -> R
         let path = &watch.path;
         watched.push(
             queue
-                .watch(Path::new(path), true, Interest::Written)
-                .map_err(|error| Error::io(format!("open {path}"), error))?,
+                .watch_file(&watch.file, Interest::Written)
+                .map_err(|error| Error::io(format!("watch {path}"), error))?,
         );
     }
     let mut gone = BTreeSet::new();

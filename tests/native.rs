@@ -1,8 +1,38 @@
 mod common;
-use caim::native::{PosixFiles, Queue, Sources, judging_elsewhere};
+use caim::native::{Event, Interest, PosixFiles, Queue, Sources, judging_elsewhere};
 use common::*;
 use std::collections::BTreeSet;
 use std::fs;
+use std::io::Write;
+
+#[test]
+fn a_watch_on_an_opened_file_hears_it_after_its_path_is_replaced() {
+    let dir = TempDir::new();
+    let path = dir.path("run.log");
+    append(&path, b"");
+    let mut writer = fs::OpenOptions::new().append(true).open(&path).unwrap();
+    let opened = fs::File::open(&path).unwrap();
+    append(&dir.path("next.log"), b"");
+    fs::rename(dir.path("next.log"), &path).unwrap();
+    let queue = Queue::new().unwrap();
+    let watch = queue.watch_file(&opened, Interest::Written).unwrap();
+    let sentinel = dir.path("sentinel");
+    append(&sentinel, b"");
+    let bell = queue.watch(&sentinel, true, Interest::Written).unwrap();
+
+    writer.write_all(b"line\n").unwrap();
+    append(&sentinel, b"rung\n");
+    let mut heard = BTreeSet::new();
+    while !heard.contains(&bell.token().0) {
+        let events = queue.wait(Some(180.0)).unwrap();
+        assert!(!events.is_empty(), "no event before the hang guard ran out");
+        heard.extend(events.iter().filter_map(|event| match event {
+            Event::Changed(token) => Some(token.0),
+            _ => None,
+        }));
+    }
+    assert!(heard.contains(&watch.token().0), "the write to the opened file went unheard");
+}
 
 fn owners_of_next(queue: &Queue, sources: &Sources) -> BTreeSet<usize> {
     let events = queue.wait(Some(180.0)).unwrap();

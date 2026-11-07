@@ -474,9 +474,9 @@ fn wait(
         let queue = Queue::new()?;
         queue.termination()?;
         let bell_path = group.directory.join("bell");
-        open(&bell_path)?;
+        let bell = open(&bell_path)?;
         let _bell = queue
-            .watch(&bell_path, true, Interest::Touched)
+            .watch_file(&bell, Interest::Touched)
             .map_err(|error| Error::io(format!("open {}", bell_path.display()), error))?;
         let _holders = queue
             .watch(&group.directory.join("holders"), true, Interest::Written)
