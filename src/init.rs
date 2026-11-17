@@ -16,7 +16,8 @@ name = "{name}"
 description = "Say hello"
 run = "echo hello"
 
-## Every key a task can take. Only run is required.
+## Every key a task can take. Only run is required, or script in place of it:
+## script = "tasks/build.lua" runs a Lua script from the project, supervised as a command is.
 ##
 # [tasks.build]
 # description = "Build"                  # one line for list and --help

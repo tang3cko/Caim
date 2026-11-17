@@ -89,11 +89,12 @@ Caim sets up no tools: tasks run in the environment caim was started in. With mi
 
 ## Configuration
 
-A task needs only `run`: a string goes through `sh -c`, a list is the command and its arguments with no shell. A command with a `/` in it is a path from the project's root; it may be built by a task this one requires.
+A task needs only `run`, or `script` in its place: a string goes through `sh -c`, a list is the command and its arguments with no shell. A command with a `/` in it is a path from the project's root; it may be built by a task this one requires.
 
 | Key | Meaning | Default |
 |---|---|---|
-| `run` | The command | required |
+| `run` | The command | required, unless `script` |
+| `script` | A [Lua script](#lua-scripts), a path inside the project, run in place of `run` | none |
 | `description` | One line for `list` and `--help` | none |
 | `group` | The heading `list` shows the task under | none |
 | `requires` | Tasks run first, each to success: a name runs it with its defaults; `{ task = "build", args = { configuration = "Debug", clean = true } }` gives some arguments, and `{ arg = "configuration" }` as a value passes on this task's own | none |
@@ -221,6 +222,8 @@ return finished and code or 1
 | `caim.declare("log" or "dir", PATH)` | Declares a progress source to the caim running the task, as `CAIM_DECLARED` does; returns `false` when there is no such file to append to |
 
 A script's integer return value is its exit status, 0 otherwise, and it ends when its chunk does: processes it started and coroutines still waiting are not stopped. A Lua error, or a script that cannot be read, ends it with 125 and the message on stderr; a missing `FILE` is 64. A script in which every coroutine waits on another fails with 125 rather than hang. `script` is not a task name.
+
+A task can be a script: `script = "tasks/build.lua"` in place of `run`. The task's command is then caim running the script, from the project's root unless `dir` says otherwise, so the stall guard and the progress the script declares, the process group, stop steps, signals, `env`, hooks and the exit status work as they do for `run`. `caim <task> --help` names the script and `--dry-run` prints `script:` where it would print `run:`. A script that does not exist ends the task with 127 before anything starts.
 
 ## Compatibility
 
