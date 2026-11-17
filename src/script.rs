@@ -2,7 +2,7 @@
 //! native queue serves all of them, so a script waits on several processes and log lines at once
 //! without threads, sleeps or polling.
 
-use crate::error::{Error, FAILED, Result, missing};
+use crate::error::{Error, FAILED, Result, USAGE, missing};
 use crate::native::{self, Interest, Queue, Watch};
 use crate::waits::{LineWatch, absolute};
 use mlua::thread::ThreadStatus;
@@ -22,6 +22,7 @@ local yield = coroutine.yield
 function caim.exit(pid) return yield("exit", pid) end
 function caim.line(path, pattern, pid) return yield("line", path, pattern, pid) end
 function caim.join(id) return yield("join", id) end
+function caim.usage(message) return yield("usage", message) end
 "#;
 
 /// The processes this script started and what it knows of their ends.
@@ -224,6 +225,46 @@ fn install(lua: &Lua, shared: &Rc<RefCell<Shared>>) -> mlua::Result<()> {
         })?,
     )?;
 
+    caim.set(
+        "flags",
+        lua.create_function(|lua, (args, spec): (Table, Table)| {
+            let mut options: Vec<(String, String)> = spec.pairs::<String, String>().collect::<mlua::Result<_>>()?;
+            options.sort();
+            let words = lua.create_table()?;
+            for (name, option) in options {
+                if let Some(value) = args.get::<Option<String>>(name)?.filter(|value| !value.is_empty()) {
+                    words.push(option)?;
+                    words.push(value)?;
+                }
+            }
+            Ok(words)
+        })?,
+    )?;
+
+    caim.set(
+        "env",
+        lua.create_function(|_, (name, default): (String, Option<String>)| {
+            let variable = name.to_ascii_uppercase().replace('-', "_");
+            let found = [format!("CAIM_ARG_{variable}"), variable]
+                .iter()
+                .find_map(|key| std::env::var(key).ok().filter(|value| !value.is_empty()));
+            Ok(found.or(default))
+        })?,
+    )?;
+
+    let root = match crate::tasks::root() {
+        Ok(root) => root,
+        Err(_) => std::env::current_dir().map_err(mlua::Error::external)?,
+    };
+    caim.set("root", root.to_string_lossy().into_owned())?;
+
+    caim.set(
+        "abs",
+        lua.create_function(|_, path: String| {
+            absolute(&path).map_err(|error| mlua::Error::runtime(format!("abs: {error}")))
+        })?,
+    )?;
+
     lua.globals().set("caim", caim)?;
     lua.load(PRELUDE).set_name("prelude").exec()
 }
@@ -329,6 +370,11 @@ fn drive(lua: &Lua, shared: &Rc<RefCell<Shared>>, main: Function) -> Result<i32>
                         Some(output) => ready.push_back((id, thread, output.clone())),
                         None => parked.push(Parked { id, thread, wait: Wait::Join(target) }),
                     }
+                }
+                "usage" => {
+                    let message = text(values.next()).ok_or_else(|| Error::Usage("usage needs a message".into()))?;
+                    eprintln!("{message}");
+                    return Ok(USAGE);
                 }
                 other => return Err(Error::Usage(format!("unknown wait {other}"))),
             }
