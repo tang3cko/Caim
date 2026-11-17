@@ -184,7 +184,7 @@ pub(crate) fn valid_name(name: &str) -> bool {
 fn reserved(name: &str) -> bool {
     waits::MODES.contains(&name)
         || digests::MODES.contains(&name)
-        || ["list", "help", crate::completions::MODE].contains(&name)
+        || ["list", "help", crate::completions::MODE, crate::script::MODE].contains(&name)
 }
 
 fn executable(path: &Path) -> bool {

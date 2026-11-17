@@ -12,6 +12,7 @@ Long builds, imports and test runs sometimes hang. A timeout either kills a run 
 - **Concurrency groups.** Keep tasks that share an editor, a build directory or a device from running together, across every checkout and worktree of a project, exclusively or shared with a limit.
 - **A well-behaved supervisor.** Each run is a process group of its own; TERM, INT, HUP and QUIT stop it in steps; Ctrl-Z suspends the run and `fg` resumes it.
 - **Waiting without sleeping.** The scripts a task runs can wait on a process, a file or a log line through the same binary, by events, never a fixed delay, and check freshness stamps by SHA-256.
+- **Scripts in Lua.** `caim script FILE` runs a Lua script that waits on several processes and log lines at once, by events, with Lua built into the binary.
 - **Hooks.** A `lock` hook can hold a run back, and `after` hooks can change its status.
 - **Bash and zsh completion.**
 
@@ -76,6 +77,7 @@ caim --init
 caim list
 caim <task> --help
 caim [--dry-run] <task> [--name value ...] [<task> [--name value ...] ...]
+caim script FILE
 caim completions bash|zsh
 ```
 
@@ -193,6 +195,32 @@ caim stop --group G --step TERM:20 --step KILL:20
 ### Freshness stamps
 
 `caim hash` reads NUL-separated paths on stdin and prints `shasum -a 256` lines for them. `caim hash-check LIST...` hashes the files those lists name and prints `<list>\t<file>` for every one that changed or is missing; it exits 0 when none did, 1 when some did, and 125 when a list cannot be read.
+
+## Lua scripts
+
+When a script has to wait on several things at once, shell gets awkward. `caim script FILE` runs a Lua 5.5 script that has a `caim` table; Lua is built into caim, so nothing else has to be installed. Every wait is a coroutine yield, and one event queue serves all of them: no threads, no polling, no fixed delay.
+
+```lua
+local log = "run.log"
+local pid = caim.spawn{ "./long-job", output = log }
+caim.declare("log", log)
+local finished = caim.line(log, "^ALL DONE", pid)   -- false if the process exited first
+local code = caim.exit(pid)
+return finished and code or 1
+```
+
+| Function | Does |
+|---|---|
+| `caim.args` | The arguments as a table, from `CAIM_ARG_<NAME>` with the names lower-cased |
+| `caim.task` | The name of the task running the script, from `CAIM_TASK` |
+| `caim.spawn{ cmd, arg, ..., output = FILE, env = {K = V} }` | Starts a process with no stdin and returns its pid; `output` receives its stdout and stderr |
+| `caim.exit(pid)` | Waits for a process this script started and returns its status, 128 plus the signal when a signal ended it; nil once it has been waited for |
+| `caim.line(FILE, REGEX, pid)` | Waits for a line of the file to match a regular expression and returns `true`, or `false` when `pid`, if given, exited first without one; a file that does not exist yet is waited for |
+| `caim.go(function)` | Starts a coroutine and returns its id; it runs when the script waits |
+| `caim.join(id)` | Waits for a coroutine and returns what it returned |
+| `caim.declare("log" or "dir", PATH)` | Declares a progress source to the caim running the task, as `CAIM_DECLARED` does; returns `false` when there is no such file to append to |
+
+A script's integer return value is its exit status, 0 otherwise, and it ends when its chunk does: processes it started and coroutines still waiting are not stopped. A Lua error, or a script that cannot be read, ends it with 125 and the message on stderr; a missing `FILE` is 64. A script in which every coroutine waits on another fails with 125 rather than hang. `script` is not a task name.
 
 ## Compatibility
 

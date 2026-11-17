@@ -66,9 +66,9 @@ fn wait_written(path: &str, guard: Option<f64>) -> Result<i32> {
     }
 }
 
-struct LineWatch {
+pub(crate) struct LineWatch {
     path: String,
-    file: File,
+    pub(crate) file: File,
     pattern: Regex,
     gate: Option<Regex>,
     gated: bool,
@@ -76,7 +76,7 @@ struct LineWatch {
 }
 
 impl LineWatch {
-    fn new(path: &str, pattern: &str, gate: Option<&str>) -> Result<Self> {
+    pub(crate) fn new(path: &str, pattern: &str, gate: Option<&str>) -> Result<Self> {
         let compile =
             |text: &str| Regex::new(text).map_err(|error| Error::Usage(format!("invalid regular expression: {error}")));
         Ok(LineWatch {
@@ -89,7 +89,7 @@ impl LineWatch {
         })
     }
 
-    fn matches(&mut self) -> Result<bool> {
+    pub(crate) fn matches(&mut self) -> Result<bool> {
         let mut bytes = [0u8; 65536];
         loop {
             let count = match self.file.read(&mut bytes) {
