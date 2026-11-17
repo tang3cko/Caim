@@ -5,6 +5,7 @@ pub mod error;
 pub mod init;
 pub mod native;
 pub mod progress;
+pub mod script;
 pub mod sha256;
 pub mod tasks;
 pub mod waits;
