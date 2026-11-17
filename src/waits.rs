@@ -158,7 +158,7 @@ fn wait_line(mut watches: Vec<LineWatch>, pids: &[i32], guard: Option<f64>) -> R
     }
 }
 
-fn stop_step(text: &str) -> Result<StopStep> {
+pub(crate) fn stop_step(text: &str) -> Result<StopStep> {
     let (name, grace) =
         text.split_once(':').ok_or_else(|| Error::Usage(format!("expected SIGNAL:GRACE_SECONDS, got {text}")))?;
     let signal = native::signal_number(name).ok_or_else(|| Error::Usage(format!("unknown signal: {name}")))?;
