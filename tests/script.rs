@@ -356,3 +356,70 @@ fn a_termination_signal_runs_the_deferred_functions_then_ends_with_128_plus_it()
     assert!(!output.contains("not reached"), "{output}");
     assert_eq!(fs::read_to_string(dir.path("cleaned")).unwrap(), "yes");
 }
+
+#[test]
+fn lines_iterates_the_matching_lines_with_their_captures() {
+    let dir = TempDir::new();
+    fs::write(dir.path("out.log"), "noise\nCASE ok a\nCASE bad b\nmore noise\nCASE ok c\n").unwrap();
+    let source = r#"
+        local log = caim.args.dir .. "/out.log"
+        for line, verdict, name in caim.lines(log, "^CASE (%w+) (%w+)$") do print(line, verdict, name) end
+        local count = 0
+        for line in caim.lines(log, "^CASE") do count = count + 1 end
+        print(count)
+        for line in caim.lines(caim.args.dir .. "/absent.log", ".") do print("never") end
+        print(pcall(caim.lines, log, "("))
+    "#;
+    let (status, output) = run(&mut script(&dir, source));
+    assert_eq!(status, 0, "{output}");
+    assert!(output.starts_with("3\n"), "Lua patterns are not regular expressions: {output}");
+    let source = source.replace("%w+", "\\\\w+");
+    let (status, output) = run(&mut script(&dir, &source));
+    assert_eq!(status, 0, "{output}");
+    let mut lines = output.lines();
+    assert_eq!(lines.next(), Some("CASE ok a\tok\ta"));
+    assert_eq!(lines.next(), Some("CASE bad b\tbad\tb"));
+    assert_eq!(lines.next(), Some("CASE ok c\tok\tc"));
+    assert_eq!(lines.next(), Some("3"));
+    assert!(lines.next().is_some_and(|line| line.starts_with("false\t") && line.contains("regular expression")));
+}
+
+#[test]
+fn a_verdict_is_the_worst_of_its_cases_with_the_missing_ones_void() {
+    let dir = TempDir::new();
+    for (body, expected, last) in [
+        ("v:pass('a'); v:pass('b')", 0, "VERDICT PASS cases=2 pass=2 fail=0 void=0"),
+        ("v:pass('a'); v:fail('b')", 1, "VERDICT FAIL cases=2 pass=1 fail=1 void=0"),
+        ("v:fail('a'); v:void('b'); v:pass('c')", 2, "VERDICT VOID cases=3 pass=1 fail=1 void=1"),
+        ("v:pass('a'); v:expect{ 'a', 'missing' }", 2, "VERDICT VOID cases=2 pass=1 fail=0 void=1"),
+        ("v:fail('a'); v:pass('a')", 1, "VERDICT FAIL cases=1 pass=0 fail=1 void=0"),
+        ("v:pass('a'); v:record('MAYBE', 'b')", 2, "VERDICT VOID cases=2 pass=1 fail=0 void=1"),
+        ("", 2, "VERDICT VOID cases=0 pass=0 fail=0 void=0"),
+    ] {
+        let source = format!("local v = caim.verdict()\n{body}\nreturn v:finish()");
+        let (status, output) = run(&mut script(&dir, &source));
+        assert_eq!(status, expected, "{body}: {output}");
+        assert_eq!(output.lines().last(), Some(last), "{body}: {output}");
+    }
+    let source = "local v = caim.verdict()\nv:pass('b'); v:fail('a'); v:expect{ 'z', 'a' }\nreturn v:finish()";
+    let (status, output) = run(&mut script(&dir, source));
+    let expected =
+        "VERDICT VOID case=z\nVERDICT FAIL case=a\nVERDICT PASS case=b\nVERDICT VOID cases=3 pass=1 fail=1 void=1\n";
+    assert_eq!((status, output.as_str()), (2, expected));
+}
+
+#[test]
+fn a_verdict_is_built_from_a_log() {
+    let dir = TempDir::new();
+    fs::write(dir.path("out.log"), "VERDICT PASS case=boot\nVERDICT FAIL case=title\nnoise\n").unwrap();
+    let source = r#"
+        local v = caim.verdict():expect{ "boot", "title", "quit" }
+        for _, verdict, name in caim.lines(caim.args.dir .. "/out.log", "^VERDICT (\\w+) case=(\\S+)") do
+            v:record(verdict, name)
+        end
+        return v:finish()
+    "#;
+    let (status, output) = run(&mut script(&dir, source));
+    assert_eq!(status, 2, "{output}");
+    assert!(output.contains("VERDICT VOID case=quit") && output.contains("VERDICT FAIL case=title"), "{output}");
+}
