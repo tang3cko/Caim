@@ -423,3 +423,137 @@ fn a_verdict_is_built_from_a_log() {
     assert_eq!(status, 2, "{output}");
     assert!(output.contains("VERDICT VOID case=quit") && output.contains("VERDICT FAIL case=title"), "{output}");
 }
+
+const ABC: &str = "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad";
+
+#[test]
+fn hash_gives_shasum_lines_and_an_unreadable_path_gives_nil_and_why() {
+    let dir = TempDir::new();
+    fs::write(dir.path("a"), "abc").unwrap();
+    fs::write(dir.path("b"), "").unwrap();
+    let source = r#"
+        local dir = caim.args.dir
+        io.write(caim.hash{ dir .. "/a", dir .. "/b" })
+        local text, why = caim.hash{ dir .. "/a", dir .. "/absent" }
+        print(text, why ~= nil and why:find("absent", 1, true) ~= nil)
+        print(caim.hash{} == "")
+    "#;
+    let (status, output) = run(&mut script(&dir, source));
+    assert_eq!(status, 0, "{output}");
+    let empty = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+    let expected = format!("{ABC}  {0}/a\n{empty}  {0}/b\nnil\ttrue\ntrue\n", dir.0.display());
+    assert_eq!(output, expected);
+}
+
+#[test]
+fn fresh_compares_files_with_the_stamps_made_of_them() {
+    let dir = TempDir::new();
+    fs::write(dir.path("a"), "abc").unwrap();
+    fs::write(dir.path("b"), "abc").unwrap();
+    let source = r#"
+        local dir = caim.args.dir
+        local function stamp(name, paths)
+            local file = assert(io.open(dir .. "/" .. name, "w")); file:write(caim.hash(paths)); file:close()
+        end
+        local function show(fresh, stale)
+            local words = {}
+            for _, entry in ipairs(stale or {}) do words[#words + 1] = (entry.list:match("[^/]+$")) .. ":" .. (entry.path and entry.path:match("[^/]+$") or "-") end
+            print(fresh, table.concat(words, " "))
+        end
+        stamp("one.stamp", { dir .. "/a" })
+        stamp("two.stamp", { dir .. "/a", dir .. "/b" })
+        show(caim.fresh{ dir .. "/one.stamp", dir .. "/two.stamp" })
+        local file = io.open(dir .. "/b", "w"); file:write("changed"); file:close()
+        show(caim.fresh{ dir .. "/one.stamp", dir .. "/two.stamp" })
+        os.remove(dir .. "/a")
+        show(caim.fresh{ dir .. "/one.stamp", dir .. "/two.stamp" })
+        show(caim.fresh{ dir .. "/never.stamp" })
+        local bad = io.open(dir .. "/bad.stamp", "w"); bad:write("not a stamp\n"); bad:close()
+        print(pcall(caim.fresh, { dir .. "/bad.stamp" }))
+    "#;
+    let (status, output) = run(&mut script(&dir, source));
+    assert_eq!(status, 0, "{output}");
+    let mut lines = output.lines();
+    assert_eq!(lines.next(), Some("true\t"));
+    assert_eq!(lines.next(), Some("false\ttwo.stamp:b"));
+    assert_eq!(lines.next(), Some("false\tone.stamp:a two.stamp:a two.stamp:b"));
+    assert_eq!(lines.next(), Some("false\tnever.stamp:-"));
+    assert!(
+        lines.next().is_some_and(|line| line.starts_with("false\t") && line.contains("not a `shasum -a 256` line"))
+    );
+}
+
+#[test]
+fn modules_are_found_next_to_the_script_and_in_the_projects_lua_directory() {
+    let project = TempDir::new();
+    fs::write(project.path("caim.toml"), "name = \"case\"\n").unwrap();
+    fs::create_dir_all(project.path("lua/tools")).unwrap();
+    fs::create_dir_all(project.path("tasks")).unwrap();
+    fs::write(project.path("lua/shared.lua"), "return { name = 'shared', task = caim.task }").unwrap();
+    fs::write(project.path("lua/tools/init.lua"), "return 'tools'").unwrap();
+    fs::write(project.path("tasks/near.lua"), "return 'near'").unwrap();
+    fs::write(project.path("near.lua"), "return 'the project root, not on the path'").unwrap();
+    let source = "print(require('shared').name, require('tools'), require('near'), pcall(require, 'absent'))";
+    fs::write(project.path("tasks/main.lua"), source).unwrap();
+    let mut command = caim();
+    command.args(["script", &project.text("tasks/main.lua")]).env("CAIM_ROOT", &project.0).current_dir(&project.0);
+    let (status, output) = run(&mut command);
+    assert_eq!(status, 0, "{output}");
+    assert!(output.starts_with("shared\ttools\tnear\tfalse\t"), "{output}");
+    assert!(output.contains("module 'absent' not found"), "{output}");
+}
+
+fn project_with_tasks(tasks: &str) -> (TempDir, TempDir) {
+    let project = TempDir::new();
+    fs::write(project.path("caim.toml"), format!("name = \"case\"\n{tasks}")).unwrap();
+    (project, TempDir::new())
+}
+
+fn in_project(project: &TempDir, locks: &TempDir, script: &str) -> Command {
+    fs::write(project.path("main.lua"), script).unwrap();
+    let mut command = caim();
+    for (key, _) in std::env::vars() {
+        if key.starts_with("CAIM_") {
+            command.env_remove(key);
+        }
+    }
+    command
+        .args(["script", &project.text("main.lua")])
+        .env("CAIM_ROOT", &project.0)
+        .env("CAIM_LOCK_DIR", &locks.0)
+        .current_dir(&project.0);
+    command
+}
+
+#[test]
+fn invoke_runs_another_task_with_arguments_and_returns_its_status() {
+    let (project, locks) = project_with_tasks(
+        r#"
+[tasks.greet]
+run = ["sh", "-c", "echo greet $CAIM_ARG_WHO ${CAIM_ARG_LOUD:-quiet}; env | grep -c PARENT_ONLY; exit ${CAIM_ARG_CODE:-0}"]
+[[tasks.greet.args]]
+name = "who"
+help = "whom"
+default = "nobody"
+[[tasks.greet.args]]
+name = "loud"
+help = "loudly"
+flag = true
+[[tasks.greet.args]]
+name = "code"
+help = "the status"
+default = "0"
+"#,
+    );
+    let source = r#"
+        print(caim.invoke("greet", { who = "Ada", loud = true, quiet = false }))
+        print(caim.invoke("greet", { code = "3" }))
+        print(pcall(caim.invoke, "greet", { who = {} }))
+        return caim.invoke("absent")
+    "#;
+    let (status, output) = run(in_project(&project, &locks, source).env("CAIM_ARG_PARENT_ONLY", "leak"));
+    assert!(output.contains("greet Ada 1\n0\n[greet] exit=0\n0\n"), "{output}");
+    assert!(output.contains("greet nobody quiet\n0\n[greet] exit=3\n3\n"), "{output}");
+    assert!(output.contains("false\t"), "{output}");
+    assert_eq!(status, 64, "an unknown task is caim's own 64: {output}");
+}

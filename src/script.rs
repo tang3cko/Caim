@@ -19,6 +19,7 @@ use std::rc::Rc;
 pub const MODE: &str = "script";
 
 const PRELUDE: &str = r#"
+local spawn_task = ...
 local yield = coroutine.yield
 local function wait(...)
   if not coroutine.isyieldable() then error("a deferred function cannot wait", 3) end
@@ -28,6 +29,7 @@ function caim.exit(pid) return wait("exit", pid) end
 function caim.first(pids) return wait("first", pids) end
 function caim.line(path, pattern, pid) return wait("line", path, pattern, pid) end
 function caim.join(id) return wait("join", id) end
+function caim.invoke(name, args) return caim.exit(spawn_task(name, args)) end
 function caim.usage(message) return wait("usage", message) end
 
 local rank = { PASS = 0, FAIL = 1, VOID = 2 }
@@ -135,7 +137,7 @@ fn arguments(lua: &Lua) -> mlua::Result<Table> {
     Ok(args)
 }
 
-fn install(lua: &Lua, shared: &Rc<RefCell<Shared>>) -> mlua::Result<()> {
+fn install(lua: &Lua, shared: &Rc<RefCell<Shared>>, directory: &str) -> mlua::Result<()> {
     let caim = lua.create_table()?;
     caim.set("args", arguments(lua)?)?;
     caim.set("task", std::env::var("CAIM_TASK").unwrap_or_default())?;
@@ -150,18 +152,7 @@ fn install(lua: &Lua, shared: &Rc<RefCell<Shared>>) -> mlua::Result<()> {
             };
             let mut command = Command::new(program);
             command.args(rest).stdin(Stdio::null());
-            // SAFETY: only async-signal-safe calls, between fork and exec.
-            unsafe {
-                command.pre_exec(|| {
-                    for signal in native::TERMINATION.into_iter().chain([libc::SIGTSTP, libc::SIGCHLD]) {
-                        libc::signal(signal, libc::SIG_DFL);
-                    }
-                    let mut none: libc::sigset_t = std::mem::zeroed();
-                    libc::sigemptyset(&mut none);
-                    libc::pthread_sigmask(libc::SIG_SETMASK, &none, std::ptr::null_mut());
-                    Ok(())
-                });
-            }
+            default_signals(&mut command);
             if let Some(path) = spec.get::<Option<String>>("output")? {
                 let file = File::create(&path).map_err(|error| mlua::Error::runtime(format!("{path}: {error}")))?;
                 command.stdout(file.try_clone().map_err(mlua::Error::external)?).stderr(file);
@@ -343,8 +334,100 @@ fn install(lua: &Lua, shared: &Rc<RefCell<Shared>>) -> mlua::Result<()> {
         })?,
     )?;
 
+    caim.set(
+        "hash",
+        lua.create_function(|lua, paths: Vec<String>| {
+            Ok(match crate::digests::stamp(&paths) {
+                Ok(text) => MultiValue::from_vec(vec![Value::String(lua.create_string(text)?)]),
+                Err(why) => MultiValue::from_vec(vec![Value::Nil, Value::String(lua.create_string(why)?)]),
+            })
+        })?,
+    )?;
+
+    caim.set(
+        "fresh",
+        lua.create_function(|lua, lists: Vec<String>| {
+            let stale = lua.create_table()?;
+            let entry = |list: &str, path: Option<&str>| -> mlua::Result<Table> {
+                let entry = lua.create_table()?;
+                entry.set("list", list)?;
+                entry.set("path", path)?;
+                Ok(entry)
+            };
+            let (present, absent): (Vec<&String>, Vec<&String>) =
+                lists.iter().partition(|list| std::path::Path::new(list).exists());
+            for list in absent {
+                stale.push(entry(list, None)?)?;
+            }
+            let present: Vec<String> = present.into_iter().cloned().collect();
+            for (index, path) in crate::digests::stale_entries(&present).map_err(runtime)? {
+                stale.push(entry(&present[index], Some(&path))?)?;
+            }
+            Ok((stale.is_empty(), stale))
+        })?,
+    )?;
+
+    let package: Table = lua.globals().get("package")?;
+    let root = root.to_string_lossy();
+    let places = [directory, &format!("{root}/lua")];
+    let path: Vec<String> =
+        places.iter().flat_map(|place| [format!("{place}/?.lua"), format!("{place}/?/init.lua")]).collect();
+    package.set("path", path.join(";"))?;
+    package.set("cpath", "")?;
+
+    let spawn_task = {
+        let shared = shared.clone();
+        lua.create_function(move |_, (name, args): (String, Option<Table>)| {
+            let mut options: Vec<(String, Value)> = match args {
+                Some(args) => args.pairs::<String, Value>().collect::<mlua::Result<_>>()?,
+                None => Vec::new(),
+            };
+            options.sort_by(|a, b| a.0.cmp(&b.0));
+            let caim = std::env::current_exe().map_err(mlua::Error::external)?;
+            let mut command = Command::new(caim);
+            command.arg(&name).stdin(Stdio::null());
+            for (key, value) in options {
+                match value {
+                    Value::Boolean(true) => command.arg(format!("--{key}")),
+                    Value::Boolean(false) | Value::Nil => continue,
+                    Value::String(text) => command.arg(format!("--{key}={}", text.to_str()?)),
+                    Value::Integer(number) => command.arg(format!("--{key}={number}")),
+                    Value::Number(number) => command.arg(format!("--{key}={number}")),
+                    _ => {
+                        return Err(mlua::Error::runtime(format!("{key}: an argument is a string, number or boolean")));
+                    }
+                };
+            }
+            for (key, _) in std::env::vars_os() {
+                if key.to_string_lossy().starts_with("CAIM_ARG_") {
+                    command.env_remove(key);
+                }
+            }
+            default_signals(&mut command);
+            let child = command.spawn().map_err(|error| mlua::Error::runtime(format!("caim {name}: {error}")))?;
+            let pid = child.id() as i32;
+            shared.borrow_mut().children.insert(pid, child);
+            Ok(pid)
+        })?
+    };
+
     lua.globals().set("caim", caim)?;
-    lua.load(PRELUDE).set_name("prelude").exec()
+    lua.load(PRELUDE).set_name("prelude").call(spawn_task)
+}
+
+fn default_signals(command: &mut Command) {
+    // SAFETY: only async-signal-safe calls, between fork and exec.
+    unsafe {
+        command.pre_exec(|| {
+            for signal in native::TERMINATION.into_iter().chain([libc::SIGTSTP, libc::SIGCHLD]) {
+                libc::signal(signal, libc::SIG_DFL);
+            }
+            let mut none: libc::sigset_t = std::mem::zeroed();
+            libc::sigemptyset(&mut none);
+            libc::pthread_sigmask(libc::SIG_SETMASK, &none, std::ptr::null_mut());
+            Ok(())
+        });
+    }
 }
 
 fn parse_steps(steps: Option<Vec<String>>) -> mlua::Result<Vec<StopStep>> {
@@ -374,7 +457,11 @@ pub fn dispatch(args: &[String]) -> Result<i32> {
     let queue = Rc::new(Queue::new()?);
     queue.termination()?;
     let shared = Rc::new(RefCell::new(Shared::new(queue)));
-    install(&lua, &shared).map_err(lua_error)?;
+    let directory = {
+        let full = absolute(path)?;
+        full.rfind('/').map_or(String::from("/"), |at| full[..at.max(1)].to_string())
+    };
+    install(&lua, &shared, &directory).map_err(lua_error)?;
     let main = lua.load(source).set_name(path.as_str()).into_function().map_err(lua_error)?;
     let ended = drive(&lua, &shared, main);
     run_deferred(&shared);

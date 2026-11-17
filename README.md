@@ -231,10 +231,17 @@ return finished and code or 1
 | `caim.defer(function)` | Runs the function when the script ends, last-registered first, whatever ended it: the end of the chunk, a Lua error, `caim.usage`, or TERM, INT, HUP or QUIT; the signal then ends the script with 128 plus its number. A deferred function cannot wait (`caim.exit`, `caim.line`, `caim.join`, `caim.first`), but can use `caim.stop`; one that fails is reported and the rest still run |
 | `caim.lines(FILE, REGEX)` | Iterates over the lines of the file that match the regular expression, giving the line and then each capture group (`for line, verdict, name in caim.lines(log, "^VERDICT (\\w+) case=(\\S+)")`); a file that does not exist has none |
 | `caim.verdict()` | A collector of case verdicts, below |
+| `caim.hash{ PATH, ... }` | The `shasum -a 256` lines for the files, as `caim hash` prints them; `nil` and the reason when one cannot be read |
+| `caim.fresh{ STAMP, ... }` | Checks files against stamps (lists of those lines, as `caim hash-check` reads them): returns `true` and an empty list when none changed, else `false` and a list of `{ list = STAMP, path = FILE }` for each file that changed or is missing; a stamp that does not exist counts as stale, with no `path`, and one that is not made of such lines is an error |
+| `caim.invoke(TASK, { name = value, ... })` | Runs another task of the project, as `caim TASK --name=value` would, and waits for it: returns its status. A value is a string or number, `true` gives a flag, `false` and `nil` give nothing. The arguments of this task are not passed on. It starts a caim as a task's command can, so what is said above of the caim a command starts holds |
 
 A script is one chunk. Its integer return value is the exit status, 0 otherwise, and the script ends when the chunk does: processes it started and coroutines still waiting are not stopped, unless a deferred function stops them. A Lua error, or a script that cannot be read, ends it with 125 and the message on stderr; a missing `FILE` is 64. A script in which every coroutine waits on another fails with 125 rather than hang. `script` is not a task name.
 
 A task can be a script: `script = "tasks/build.lua"` in place of `run`. The task's process is caim running the script from the project's root, so everything a task's command gets applies unchanged: the stall guard and the progress the script declares, the process group, the stop steps and signals, `env`, `dir`, hooks and the exit status. `caim list` and `caim <task> --help` show it like any task, and `--dry-run` prints `script:` where it would print `run:`. A script that is missing ends the task with 127 before anything starts.
+
+### Modules
+
+`require` finds a module next to the script (`tasks/util.lua` or `tasks/util/init.lua` for a script in `tasks/`) and in the project's `lua/` directory, and nowhere else: not the current directory, and no compiled modules. A module sees the `caim` table as the script does.
 
 ### Verdicts
 
