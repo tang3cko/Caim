@@ -64,7 +64,10 @@ pub struct Declaration {
     pub args: Vec<Arg>,
     #[serde(default, deserialize_with = "concurrency::declared")]
     pub concurrency: Vec<Concurrency>,
-    pub run: Run,
+    #[serde(default)]
+    pub run: Option<Run>,
+    #[serde(default)]
+    pub script: Option<String>,
     #[serde(default)]
     pub env: BTreeMap<String, String>,
     #[serde(default)]
@@ -232,6 +235,12 @@ fn check(name: &str, declaration: &Declaration, at: &str, hooks: &Commands) -> R
             return Err(setup(format!("{at}: dir is a path inside the project, not {dir:?}")));
         }
     }
+    if let Some(script) = &declaration.script {
+        let inside = Path::new(script).components().all(|part| matches!(part, std::path::Component::Normal(_)));
+        if script.is_empty() || !inside {
+            return Err(setup(format!("{at}: script is a path inside the project, not {script:?}")));
+        }
+    }
     for key in declaration.env.keys() {
         if key.is_empty() || key.contains('=') || key.contains('\0') || key.starts_with("CAIM_") {
             return Err(setup(format!("{at}: env cannot set {key:?}; CAIM_ names belong to caim")));
@@ -273,6 +282,23 @@ fn command(root: &Path, run: &Run, at: &str, check: bool) -> Result<Vec<String>>
     Ok(command)
 }
 
+/// A script task's process is caim itself running the script, so the run is supervised as any other.
+fn task_command(root: &Path, declaration: &Declaration, at: &str) -> Result<Vec<String>> {
+    match (&declaration.run, &declaration.script) {
+        (Some(run), None) => command(root, run, at, false),
+        (None, Some(script)) => {
+            let caim = std::env::current_exe().map_err(|error| setup(format!("{at}: caim's own path: {error}")))?;
+            Ok(vec![
+                caim.to_string_lossy().into_owned(),
+                crate::script::MODE.into(),
+                root.join(script).to_string_lossy().into_owned(),
+            ])
+        }
+        (Some(_), Some(_)) => Err(setup(format!("{at}: a task has run or script, not both"))),
+        (None, None) => Err(setup(format!("{at}: a task needs run or script"))),
+    }
+}
+
 fn stop_step(text: &str) -> Option<StopStep> {
     let (name, grace) = text.split_once(':')?;
     let grace: f64 = grace.parse().ok()?;
@@ -287,9 +313,14 @@ fn stop_steps(task: &Task) -> Vec<StopStep> {
 }
 
 fn missing_program(task: &Task) -> Option<&str> {
-    let Run::Command(declared) = &task.declaration.run else { return None };
+    let Some(Run::Command(declared)) = &task.declaration.run else { return None };
     let first = declared.first()?;
     (first.contains('/') && !executable(Path::new(&task.command[0]))).then_some(first.as_str())
+}
+
+fn missing_script(task: &Task) -> Option<&str> {
+    let script = task.declaration.script.as_deref()?;
+    (!Path::new(&task.command[2]).exists()).then_some(script)
 }
 
 pub fn discover(
@@ -309,7 +340,7 @@ pub fn discover(
     for (name, declaration) in declared {
         let source = format!("{PROJECT_FILE} [tasks.{name}]");
         check(&name, &declaration, &source, &commands)?;
-        let command = command(root, &declaration.run, &source, false)?;
+        let command = task_command(root, &declaration, &source)?;
         tasks.insert(name.clone(), Task { name, declaration, command, source });
     }
     for task in tasks.values() {
@@ -578,6 +609,9 @@ pub fn usage(task: &Task) -> String {
     if let Some(group) = &task.declaration.group {
         facts.push(format!("group {group}"));
     }
+    if let Some(script) = &task.declaration.script {
+        facts.push(format!("runs the Lua script {script}"));
+    }
     if !task.declaration.requires.is_empty() {
         facts.push(format!("runs {} first", shown_requirements(&task.declaration.requires)));
     }
@@ -662,7 +696,11 @@ fn dry_run(order: &[(&Task, BTreeMap<String, String>)]) -> i32 {
     for (task, values) in order {
         let declaration = &task.declaration;
         println!("{}", task.name);
-        println!("  run: {}", shown_command(&declaration.run));
+        match (&declaration.run, &declaration.script) {
+            (Some(run), _) => println!("  run: {}", shown_command(run)),
+            (None, Some(script)) => println!("  script: {script}"),
+            (None, None) => {}
+        }
         println!("  dir: {}", declaration.dir.as_deref().unwrap_or("."));
         if !values.is_empty() {
             let shown: Vec<String> = values.iter().map(|(arg, value)| format!("{}={value:?}", env_name(arg))).collect();
@@ -1224,12 +1262,13 @@ impl<'a> Runner<'a> {
             }
         }
 
-        let missing = match (missing_program(task), &task.declaration.dir) {
-            (Some(program), _) if Path::new(&task.command[0]).exists() => {
+        let missing = match (missing_program(task), missing_script(task), &task.declaration.dir) {
+            (Some(program), _, _) if Path::new(&task.command[0]).exists() => {
                 Some((CANNOT_EXECUTE, format!("{program} is not executable")))
             }
-            (Some(program), _) => Some((NOT_FOUND, format!("{program} does not exist"))),
-            (None, Some(dir)) if !self.directory(task).is_dir() => {
+            (Some(program), _, _) => Some((NOT_FOUND, format!("{program} does not exist"))),
+            (None, Some(script), _) => Some((NOT_FOUND, format!("{script} does not exist"))),
+            (None, None, Some(dir)) if !self.directory(task).is_dir() => {
                 Some((CONFIG, format!("its dir {dir} is not a directory")))
             }
             _ => None,

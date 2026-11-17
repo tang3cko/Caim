@@ -297,7 +297,7 @@ fn a_task_written_in_caim_toml_runs_like_any_other() {
 
     for (tasks, expected) in [
         ("\n[tasks.empty]\ndescription = \"t\"\nrun = []\n", "run is an empty list"),
-        ("\n[tasks.silent]\ndescription = \"t\"\n", "missing field `run`"),
+        ("\n[tasks.silent]\ndescription = \"t\"\n", "a task needs run or script"),
         ("\n[tasks.scripted]\ndescription = \"t\"\nrun = \"echo\"\n", "duplicate key"),
     ] {
         let other = Project::new();
@@ -1379,4 +1379,89 @@ fn the_bash_and_zsh_scripts_complete_task_names() {
     let (status, output) =
         run(Command::new("zsh").args(["-f", "-c", zsh]).env("CAIM", binary).env("CAIM_ROOT", &project.dir.0));
     assert_eq!((status, output.as_str()), (0, "Mac\nWin64\n"));
+}
+
+fn lua_task(project: &Project, name: &str, toml: &str, source: &str) {
+    fs::write(project.dir.path(&format!("scripts/{name}.lua")), source).unwrap();
+    project.written(&format!("\n[tasks.{name}]\nscript = \"scripts/{name}.lua\"\n{toml}"));
+}
+
+#[test]
+fn a_task_can_be_a_lua_script() {
+    let project = Project::new();
+    fs::create_dir_all(project.dir.path("sub")).unwrap();
+    lua_task(
+        &project,
+        "hello",
+        "dir = \"sub\"\nenv = { GREETING = \"hi\" }\n[[tasks.hello.args]]\nname = \"who\"\nhelp = \"whom\"\ndefault = \"world\"\n",
+        "print(caim.task, caim.args.who, os.getenv('GREETING'), io.popen('pwd'):read('l'):match('[^/]+$'))\nreturn 3",
+    );
+    let (status, stdout, stderr) = split(&mut project.x(&["hello", "--who", "there"]));
+    assert_eq!((status, stdout.as_str()), (3, "hello\tthere\thi\tsub\n[hello] exit=3\n"), "{stderr}");
+}
+
+#[test]
+fn a_script_task_is_a_guarded_run() {
+    let project = Project::new();
+    lua_task(
+        &project,
+        "quiet",
+        "idle = 1\n",
+        "local pid = caim.spawn{ 'sh', '-c', 'exec tail -f /dev/null' }\n\
+         print('started')\n\
+         caim.exit(pid)",
+    );
+    let (status, stdout, stderr) = split(&mut project.x(&["quiet"]));
+    assert_eq!(status, 124, "{stdout}{stderr}");
+    assert_eq!(last_line(&stdout), "[quiet] exit=124 (stalled)", "{stdout}");
+    assert!(stderr.contains("no progress for 1 s"), "{stderr}");
+}
+
+#[test]
+fn a_script_task_declares_progress_to_the_run() {
+    let project = Project::new();
+    lua_task(&project, "busy", "", "print(caim.declare('log', 'engine.log'), caim.declare('log', 'other.log'))");
+    let (status, stdout, stderr) = split(&mut project.x(&["busy"]));
+    assert_eq!((status, stdout.as_str()), (0, "true\ttrue\n[busy] exit=0\n"), "{stderr}");
+}
+
+#[test]
+fn a_script_and_run_are_exclusive() {
+    for (toml, expected) in [
+        ("run = \"true\"\nscript = \"a.lua\"\n", "run or script, not both"),
+        ("description = \"t\"\n", "needs run or script"),
+        ("script = \"/etc/a.lua\"\n", "script is a path inside the project"),
+        ("script = \"../a.lua\"\n", "script is a path inside the project"),
+        ("script = \"\"\n", "script is a path inside the project"),
+    ] {
+        let project = Project::new();
+        project.written(&format!("\n[tasks.bad]\n{toml}"));
+        let (status, output) = project.run(&["list"]);
+        assert_eq!(status, 78, "{toml}: {output}");
+        assert!(output.contains(expected), "{toml}: {output}");
+    }
+}
+
+#[test]
+fn a_missing_script_is_not_found() {
+    let project = Project::new();
+    project.written("\n[tasks.gone]\nscript = \"scripts/gone.lua\"\n");
+    let (status, stdout, stderr) = split(&mut project.x(&["gone"]));
+    assert_eq!(status, 127, "{stdout}{stderr}");
+    assert!(stderr.contains("scripts/gone.lua does not exist"), "{stderr}");
+    assert_eq!(last_line(&stdout), "[gone] exit=127 (did not start)", "{stdout}");
+}
+
+#[test]
+fn a_script_shows_in_dry_run_and_help() {
+    let project = Project::new();
+    lua_task(&project, "plan", "description = \"plan it\"\n", "return 0");
+    let (status, output) = project.run(&["--dry-run", "plan"]);
+    assert_eq!(status, 0, "{output}");
+    assert!(output.contains("  script: scripts/plan.lua\n") && !output.contains("  run:"), "{output}");
+    let (status, output) = project.run(&["plan", "--help"]);
+    assert_eq!(status, 0, "{output}");
+    assert!(output.contains("runs the Lua script scripts/plan.lua"), "{output}");
+    let (status, output) = project.run(&["list"]);
+    assert_eq!((status, output.contains("plan it")), (0, true), "{output}");
 }

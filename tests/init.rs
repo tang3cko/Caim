@@ -38,6 +38,7 @@ fn the_commented_reference_in_an_initialized_file_is_valid() {
     assert_eq!(init(&dir, &[]).0, 0);
 
     let written = fs::read_to_string(dir.join("caim.toml")).unwrap();
+    assert!(written.contains("## script = \"tasks/build.lua\""), "{written}");
     let uncommented: String = written
         .lines()
         .map(|line| match line.strip_prefix("# ") {
