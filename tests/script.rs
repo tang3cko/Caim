@@ -454,6 +454,120 @@ fn a_verdict_built_from_a_log() {
 }
 
 #[test]
+fn hash_gives_shasum_lines_and_an_unreadable_path_gives_nil_and_why() {
+    let dir = TempDir::new();
+    fs::write(dir.path("alpha"), "abc").unwrap();
+    fs::write(dir.path("beta"), "").unwrap();
+    let source = r#"
+        local dir = caim.args.dir
+        io.write(caim.hash{ dir .. "/alpha", dir .. "/beta" })
+        local text, why = caim.hash{ dir .. "/alpha", dir .. "/absent" }
+        print(text, why:find("absent", 1, true) ~= nil)
+        print(caim.hash{} == "")
+    "#;
+    let abc = "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad";
+    let empty = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+    let expected = format!("{abc}  {0}/alpha\n{empty}  {0}/beta\nnil\ttrue\ntrue\n", dir.0.display());
+    assert_eq!(run(&mut script(&dir, source)), (0, expected));
+}
+
+#[test]
+fn fresh_compares_files_with_the_stamps_made_of_them() {
+    let dir = TempDir::new();
+    fs::write(dir.path("alpha"), "abc").unwrap();
+    fs::write(dir.path("beta"), "abc").unwrap();
+    let source = r#"
+        local dir = caim.args.dir
+        local function stamp(name, paths)
+            local file = assert(io.open(dir .. "/" .. name, "w")); file:write(caim.hash(paths)); file:close()
+        end
+        local function show(fresh, stale)
+            local words = {}
+            for _, entry in ipairs(stale) do
+                words[#words + 1] = entry.list:match("[^/]+$") .. ":" .. (entry.path and entry.path:match("[^/]+$") or "-")
+            end
+            print(fresh, table.concat(words, " "))
+        end
+        stamp("one.stamp", { dir .. "/alpha" })
+        stamp("two.stamp", { dir .. "/alpha", dir .. "/beta" })
+        show(caim.fresh{ dir .. "/one.stamp", dir .. "/two.stamp" })
+        local file = io.open(dir .. "/beta", "w"); file:write("changed"); file:close()
+        show(caim.fresh{ dir .. "/one.stamp", dir .. "/two.stamp" })
+        os.remove(dir .. "/alpha")
+        show(caim.fresh{ dir .. "/one.stamp", dir .. "/two.stamp" })
+        show(caim.fresh{ dir .. "/never.stamp" })
+        local bad = io.open(dir .. "/bad.stamp", "w"); bad:write("not a stamp\n"); bad:close()
+        print((pcall(caim.fresh, { dir .. "/bad.stamp" })))
+    "#;
+    let expected = "true\t\nfalse\ttwo.stamp:beta\nfalse\tone.stamp:alpha two.stamp:alpha two.stamp:beta\nfalse\tnever.stamp:-\nfalse\n";
+    assert_eq!(run(&mut script(&dir, source)), (0, expected.into()));
+}
+
+#[test]
+fn modules_are_found_next_to_the_script_and_in_the_projects_lua_directory() {
+    let project = TempDir::new();
+    fs::write(project.path("caim.toml"), "name = \"case\"\n").unwrap();
+    fs::create_dir_all(project.path("lua/tools")).unwrap();
+    fs::create_dir_all(project.path("tasks")).unwrap();
+    fs::write(project.path("lua/shared.lua"), "return { name = 'shared' }").unwrap();
+    fs::write(project.path("lua/tools/init.lua"), "return 'tools'").unwrap();
+    fs::write(project.path("tasks/near.lua"), "return 'near'").unwrap();
+    fs::write(project.path("outside.lua"), "return 'not on the path'").unwrap();
+    let source = "print(require('shared').name, require('tools'), require('near'), (pcall(require, 'outside')))";
+    fs::write(project.path("tasks/main.lua"), source).unwrap();
+    let mut command = caim();
+    command.args(["script", &project.text("tasks/main.lua")]).env("CAIM_ROOT", &project.0).current_dir(&project.0);
+    assert_eq!(run(&mut command), (0, "shared\ttools\tnear\tfalse\n".into()));
+}
+
+#[test]
+fn invoke_runs_another_task_with_arguments_and_returns_its_status() {
+    let project = TempDir::new();
+    let locks = TempDir::new();
+    let tasks = r#"name = "case"
+[tasks.greet]
+run = ["sh", "-c", "echo greet $CAIM_ARG_WHO ${CAIM_ARG_LOUD:-quiet} ${CAIM_ARG_PARENT:-unset}; exit ${CAIM_ARG_CODE:-0}"]
+[[tasks.greet.args]]
+name = "who"
+help = "whom"
+default = "nobody"
+[[tasks.greet.args]]
+name = "loud"
+help = "loudly"
+flag = true
+[[tasks.greet.args]]
+name = "code"
+help = "the status"
+default = "0"
+"#;
+    fs::write(project.path("caim.toml"), tasks).unwrap();
+    let source = r#"
+        print(caim.invoke("greet", { who = "alpha", loud = true, quiet = false }))
+        print(caim.invoke("greet", { code = 3 }))
+        print((pcall(caim.invoke, "greet", { who = {} })))
+        return caim.invoke("absent")
+    "#;
+    fs::write(project.path("main.lua"), source).unwrap();
+    let mut command = caim();
+    for (key, _) in std::env::vars() {
+        if key.starts_with("CAIM_") {
+            command.env_remove(key);
+        }
+    }
+    command
+        .args(["script", &project.text("main.lua")])
+        .env("CAIM_ROOT", &project.0)
+        .env("CAIM_LOCK_DIR", &locks.0)
+        .env("CAIM_ARG_PARENT", "leaked")
+        .current_dir(&project.0);
+    let (status, output) = run(&mut command);
+    assert!(output.contains("greet alpha 1 unset\n[greet] exit=0\n0\n"), "{output}");
+    assert!(output.contains("greet nobody quiet unset\n[greet] exit=3\n3\n"), "{output}");
+    assert!(output.contains("false\n"), "{output}");
+    assert_eq!(status, 64, "an unknown task is caim's own 64: {output}");
+}
+
+#[test]
 fn script_is_not_a_task_name() {
     let dir = TempDir::new();
     fs::write(dir.path("caim.toml"), "name = \"case\"\n[tasks.script]\nrun = \"true\"\n").unwrap();

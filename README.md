@@ -231,6 +231,11 @@ return finished and code or 1
 | `caim.defer(function)` | Runs the function when the script ends, last registered first, whatever ended it: the end of the chunk, a Lua error, `caim.usage`, or TERM, INT, HUP or QUIT, after which the script ends with 128 plus the signal. A deferred function cannot wait, but can use `caim.stop`; one that fails is reported and the rest still run |
 | `caim.lines(FILE, REGEX)` | Iterates over the lines of the file that match the regular expression, giving the line and then each capture group; a file that does not exist has none |
 | `caim.verdict()` | A collector of case verdicts, below |
+| `caim.hash{ PATH, ... }` | The `shasum -a 256` lines for the files, as `caim hash` prints them; `nil` and the reason when one cannot be read |
+| `caim.fresh{ STAMP, ... }` | Checks files against stamps, lists of those lines as `caim hash-check` reads them: `true` and an empty list when none changed, else `false` and a list of `{ list = STAMP, path = FILE }` for each file that changed or is missing; a stamp that does not exist is stale with no `path`, and one that is not made of such lines is an error |
+| `caim.invoke(TASK, { name = value, ... })` | Runs another task of the project, as `caim TASK --name=value` would, waits for it, and returns its status. A value is a string or number, `true` gives a flag, `false` gives nothing; this task's own arguments are not passed on |
+
+`require` finds a module next to the script (`util.lua` or `util/init.lua`) and in the project's `lua/` directory, and nowhere else: not the current directory, and no compiled modules.
 
 A script's integer return value is its exit status, 0 otherwise, and it ends when its chunk does: processes it started and coroutines still waiting are not stopped. A Lua error, or a script that cannot be read, ends it with 125 and the message on stderr; a missing `FILE` is 64. A script in which every coroutine waits on another fails with 125 rather than hang. `script` is not a task name.
 
