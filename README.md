@@ -248,7 +248,7 @@ end
 return v:finish()
 ```
 
-`v:pass(name)`, `v:fail(name)`, `v:void(name)` and `v:record(verdict, name)` add a case; recording a case again keeps the worse verdict. `v:finish()` prints `VERDICT <verdict> case=<name>` for each case (the expected ones first, in their order) and a last line `VERDICT <verdict> cases=N pass=P fail=F void=V`, and returns the status the script should end with: the worst verdict, VOID over FAIL over PASS, as 0 for PASS, 1 for FAIL and 2 for VOID. A verdict with no cases is VOID, since nothing was judged. These are the script's own statuses, as 1 and 2 are any command's, and stay clear of the statuses caim uses itself.
+`v:pass(name)`, `v:fail(name)`, `v:void(name)` and `v:record(verdict, name)` add a case; recording a case again keeps the worse verdict. `v:finish()` prints `VERDICT <verdict> case=<name>` for each case (the expected ones first, in their order) and a last line `VERDICT <verdict> cases=N pass=P fail=F void=V`, and returns the status the script should end with: the worst verdict, VOID over FAIL over PASS, as 0 for PASS, 1 for FAIL and 2 for VOID. A verdict with no cases is VOID, since nothing was judged. These 0, 1 and 2 are the task's own statuses, as they are any command's, and are distinct from the statuses caim keeps for itself, such as 124 for a run that stalled.
 
 ## Compatibility
 
