@@ -3,14 +3,15 @@
 //! once without threads, sleeps or polling.
 
 use crate::error::{Error, FAILED, Result, USAGE};
-use crate::native::{self, Interest, Queue, Watch};
-use crate::waits::LineWatch;
+use crate::native::{self, Interest, Queue, Report, RunPlan, StopStep, Watch, WatchPlan};
+use crate::waits::{LineWatch, absolute, stop_step};
 use mlua::thread::ThreadStatus;
 use mlua::{Function, Lua, MultiValue, Table, Thread, Value};
 use std::cell::RefCell;
 use std::collections::{BTreeMap, VecDeque};
 use std::fs::{File, OpenOptions};
 use std::io::Write;
+use std::os::unix::process::CommandExt;
 use std::process::{Child, Command, Stdio};
 use std::rc::Rc;
 
@@ -18,14 +19,23 @@ pub const MODE: &str = "script";
 
 const PRELUDE: &str = r#"
 local yield = coroutine.yield
-function caim.exit(pid) return yield("exit", pid) end
-function caim.line(path, pattern, pid) return yield("line", path, pattern, pid) end
-function caim.join(id) return yield("join", id) end
-function caim.usage(message) return yield("usage", message) end
+local function wait(...)
+  if not coroutine.isyieldable() then error("a deferred function cannot wait", 3) end
+  return yield(...)
+end
+function caim.exit(pid) return wait("exit", pid) end
+function caim.first(pids) return wait("first", pids) end
+function caim.line(path, pattern, pid) return wait("line", path, pattern, pid) end
+function caim.join(id) return wait("join", id) end
+function caim.usage(message) return wait("usage", message) end
 "#;
+
+const STOP_STEPS: [StopStep; 2] =
+    [StopStep { signal: libc::SIGTERM, grace: 20.0 }, StopStep { signal: libc::SIGKILL, grace: 20.0 }];
 
 enum Wait {
     Exit(i32),
+    First(Vec<i32>),
     Line { watch: LineWatch, _watch: Watch, pid: Option<i32> },
     Join(u64),
 }
@@ -36,11 +46,30 @@ struct Parked {
     wait: Wait,
 }
 
-#[derive(Default)]
 struct Shared {
+    queue: Rc<Queue>,
     started: Vec<(u64, Function)>,
     children: BTreeMap<i32, Child>,
+    deferred: Vec<Function>,
+    interrupted: Option<i32>,
     next: u64,
+}
+
+impl Shared {
+    fn new(queue: Rc<Queue>) -> Self {
+        Shared {
+            queue,
+            started: Vec::new(),
+            children: BTreeMap::new(),
+            deferred: Vec::new(),
+            interrupted: None,
+            next: 0,
+        }
+    }
+}
+
+fn runtime(error: Error) -> mlua::Error {
+    mlua::Error::runtime(error.to_string())
 }
 
 fn lua_error(error: mlua::Error) -> Error {
@@ -72,6 +101,18 @@ fn install(lua: &Lua, shared: &Rc<RefCell<Shared>>) -> mlua::Result<()> {
             };
             let mut command = Command::new(program);
             command.args(rest).stdin(Stdio::null());
+            // SAFETY: only async-signal-safe calls, between fork and exec.
+            unsafe {
+                command.pre_exec(|| {
+                    for signal in native::TERMINATION.into_iter().chain([libc::SIGTSTP, libc::SIGCHLD]) {
+                        libc::signal(signal, libc::SIG_DFL);
+                    }
+                    let mut none: libc::sigset_t = std::mem::zeroed();
+                    libc::sigemptyset(&mut none);
+                    libc::pthread_sigmask(libc::SIG_SETMASK, &none, std::ptr::null_mut());
+                    Ok(())
+                });
+            }
             if let Some(path) = spec.get::<Option<String>>("output")? {
                 let file = File::create(&path).map_err(|error| mlua::Error::runtime(format!("{path}: {error}")))?;
                 command.stdout(file.try_clone().map_err(mlua::Error::external)?).stderr(file);
@@ -112,6 +153,82 @@ fn install(lua: &Lua, shared: &Rc<RefCell<Shared>>) -> mlua::Result<()> {
             let mut file = OpenOptions::new().append(true).open(&declared).map_err(mlua::Error::external)?;
             writeln!(file, "{kind} {path}").map_err(mlua::Error::external)?;
             Ok(true)
+        })?,
+    )?;
+
+    let deferring = shared.clone();
+    caim.set(
+        "defer",
+        lua.create_function(move |_, function: Function| {
+            deferring.borrow_mut().deferred.push(function);
+            Ok(())
+        })?,
+    )?;
+
+    caim.set(
+        "stop",
+        lua.create_function(|_, (pid, steps): (i32, Option<Vec<String>>)| {
+            let steps = parse_steps(steps)?;
+            let left = native::stop(0, &[pid], &steps, &mut std::io::stderr()).map_err(runtime)?;
+            Ok(left == 0)
+        })?,
+    )?;
+
+    let running = shared.clone();
+    caim.set(
+        "run",
+        lua.create_function(move |_, spec: Table| {
+            let argv: Vec<String> = spec.sequence_values::<String>().collect::<mlua::Result<_>>()?;
+            if argv.is_empty() {
+                return Err(mlua::Error::runtime("run needs a command"));
+            }
+            let output = spec
+                .get::<Option<String>>("output")?
+                .ok_or_else(|| mlua::Error::runtime("run needs output, the file for the command's output"))?;
+            let idle = spec
+                .get::<Option<f64>>("idle")?
+                .filter(|idle| idle.is_finite() && *idle > 0.0)
+                .ok_or_else(|| mlua::Error::runtime("run needs idle, a positive number of seconds"))?;
+            let output = absolute(&output).map_err(|error| mlua::Error::runtime(format!("run: {error}")))?;
+            let mut environment = Vec::new();
+            if let Some(env) = spec.get::<Option<Table>>("env")? {
+                for pair in env.pairs::<String, String>() {
+                    environment.push(pair?);
+                }
+            }
+            let plan = RunPlan {
+                command: argv,
+                output: output.clone(),
+                idle: Some(idle),
+                watch: WatchPlan { logs: vec![output], ..WatchPlan::default() },
+                steps: parse_steps(spec.get("steps")?)?,
+                environment,
+                ..RunPlan::default()
+            };
+            let ended = native::supervise(
+                &plan,
+                Report {
+                    started: &mut |_| {},
+                    stalled: &mut |pid| eprintln!("{}", native::stall_message(pid, idle)),
+                    unavailable: &mut |error| eprintln!("caim: the watch failed: {error}"),
+                    stops: &mut std::io::stderr(),
+                    output: &mut |_| {},
+                },
+            );
+            // The run's own queue handed the termination signals back; this script's takes them again.
+            native::restore_signals();
+            running.borrow().queue.termination().map_err(runtime)?;
+            let ended = ended.map_err(|error| mlua::Error::runtime(format!("run: {error}")))?;
+            let reaped = |status: Option<i32>| status.map(i64::from);
+            Ok(match ended {
+                native::Ended::Exit(status) => ("exit", Some(i64::from(status))),
+                native::Ended::Stall(status) => ("stall", reaped(status)),
+                native::Ended::Interrupted(signal, _) => {
+                    running.borrow_mut().interrupted = Some(signal);
+                    ("interrupted", Some(i64::from(signal)))
+                }
+                native::Ended::Unavailable(_, status) => ("unavailable", reaped(status)),
+            })
         })?,
     )?;
 
@@ -159,6 +276,14 @@ fn install(lua: &Lua, shared: &Rc<RefCell<Shared>>) -> mlua::Result<()> {
     lua.load(PRELUDE).set_name("prelude").exec()
 }
 
+fn parse_steps(steps: Option<Vec<String>>) -> mlua::Result<Vec<StopStep>> {
+    match steps {
+        None => Ok(STOP_STEPS.to_vec()),
+        Some(steps) if steps.is_empty() => Err(mlua::Error::runtime("stop needs at least one step")),
+        Some(steps) => steps.iter().map(|step| stop_step(step)).collect::<Result<_>>().map_err(runtime),
+    }
+}
+
 /// The exit status of a child this script started, reaping it.
 fn reap(shared: &Rc<RefCell<Shared>>, pid: i32) -> Result<Value> {
     let Some(mut child) = shared.borrow_mut().children.remove(&pid) else { return Ok(Value::Nil) };
@@ -175,11 +300,27 @@ pub fn dispatch(args: &[String]) -> Result<i32> {
     let [_, path] = args else { return Err(Error::Usage("expected FILE".into())) };
     let source = std::fs::read_to_string(path).map_err(|error| Error::io(format!("read {path}"), error))?;
     let lua = Lua::new();
-    let shared = Rc::new(RefCell::new(Shared::default()));
+    let queue = Rc::new(Queue::new()?);
+    queue.termination()?;
+    let shared = Rc::new(RefCell::new(Shared::new(queue)));
     install(&lua, &shared).map_err(lua_error)?;
     let main = lua.load(source).set_name(path.as_str()).into_function().map_err(lua_error)?;
+    let ended = drive(&lua, &shared, main);
+    run_deferred(&shared);
+    ended
+}
 
-    let queue = Queue::new()?;
+fn run_deferred(shared: &Rc<RefCell<Shared>>) {
+    loop {
+        let Some(function) = shared.borrow_mut().deferred.pop() else { return };
+        if let Err(error) = function.call::<()>(()) {
+            eprintln!("caim script: a deferred function failed: {error}");
+        }
+    }
+}
+
+fn drive(lua: &Lua, shared: &Rc<RefCell<Shared>>, main: Function) -> Result<i32> {
+    let queue = shared.borrow().queue.clone();
     let mut ready: VecDeque<(u64, Thread, MultiValue)> =
         VecDeque::from([(0, lua.create_thread(main).map_err(lua_error)?, MultiValue::new())]);
     let mut parked: Vec<Parked> = Vec::new();
@@ -196,8 +337,12 @@ pub fn dispatch(args: &[String]) -> Result<i32> {
                     return Ok(FAILED);
                 }
             };
-            for (id, function) in shared.borrow_mut().started.drain(..) {
+            let started = std::mem::take(&mut shared.borrow_mut().started);
+            for (id, function) in started {
                 ready.push_back((id, lua.create_thread(function).map_err(lua_error)?, MultiValue::new()));
+            }
+            if let Some(signal) = shared.borrow().interrupted {
+                return Ok(128 + signal);
             }
             if thread.status() != ThreadStatus::Resumable {
                 if id == 0 {
@@ -237,11 +382,27 @@ pub fn dispatch(args: &[String]) -> Result<i32> {
                 "exit" => {
                     let pid = integer(values.next()).ok_or_else(|| Error::Usage("exit needs a pid".into()))?;
                     if exited.contains(&pid) || !queue.process(pid)? {
-                        let code = reap(&shared, pid)?;
+                        let code = reap(shared, pid)?;
                         ready.push_back((id, thread, MultiValue::from_vec(vec![code])));
                     } else {
                         parked.push(Parked { id, thread, wait: Wait::Exit(pid) });
                     }
+                }
+                "first" => {
+                    let Some(Value::Table(table)) = values.next() else {
+                        return Err(Error::Usage("first needs a list of pids".into()));
+                    };
+                    let pids: Vec<i32> =
+                        table.sequence_values::<i32>().collect::<mlua::Result<_>>().map_err(lua_error)?;
+                    if pids.is_empty() {
+                        return Err(Error::Usage("first needs a list of pids".into()));
+                    }
+                    for &pid in &pids {
+                        if !exited.contains(&pid) && !queue.process(pid)? {
+                            exited.push(pid);
+                        }
+                    }
+                    parked.push(Parked { id, thread, wait: Wait::First(pids) });
                 }
                 "line" => {
                     let path = text(values.next()).ok_or_else(|| Error::Usage("line needs a path".into()))?;
@@ -279,7 +440,10 @@ pub fn dispatch(args: &[String]) -> Result<i32> {
         let mut index = 0;
         while index < parked.len() {
             let settled = match &mut parked[index].wait {
-                Wait::Exit(pid) if exited.contains(pid) => Some(reap(&shared, *pid)?),
+                Wait::Exit(pid) if exited.contains(pid) => Some(reap(shared, *pid)?),
+                Wait::First(pids) => {
+                    pids.iter().find(|pid| exited.contains(pid)).map(|&pid| Value::Integer(pid.into()))
+                }
                 Wait::Line { watch, pid, .. } => {
                     if watch.matches()? {
                         Some(Value::Boolean(true))
@@ -306,7 +470,12 @@ pub fn dispatch(args: &[String]) -> Result<i32> {
             eprintln!("caim script: every coroutine is waiting on another; nothing can wake them");
             return Ok(FAILED);
         }
-        for event in queue.wait(None)? {
+        let events = match queue.wait(None) {
+            Ok(events) => events,
+            Err(Error::Interrupted(signal)) => return Ok(128 + signal),
+            Err(error) => return Err(error),
+        };
+        for event in events {
             if let Some(pid) = native::exited_pid(&event) {
                 exited.push(pid);
             }
