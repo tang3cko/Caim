@@ -7,8 +7,6 @@ use std::io::{self, Read, Write};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::thread;
 
-pub const MODES: &[&str] = &["hash-check", "hash"];
-
 #[cfg(not(target_os = "macos"))]
 use crate::sha256::Sha256;
 #[cfg(target_os = "macos")]
@@ -172,7 +170,7 @@ pub(crate) fn stale_entries(lists: &[String]) -> Result<Vec<(usize, String)>> {
     Ok(stale)
 }
 
-fn hash_check(lists: &[String]) -> Result<i32> {
+pub(crate) fn hash_check(lists: &[String]) -> Result<i32> {
     if lists.is_empty() {
         return Err(Error::Usage("usage: caim hash-check LIST...".into()));
     }
@@ -184,7 +182,7 @@ fn hash_check(lists: &[String]) -> Result<i32> {
     Ok(if stale.is_empty() { OK } else { STALE })
 }
 
-fn hash(arguments: &[String]) -> Result<i32> {
+pub(crate) fn hash(arguments: &[String]) -> Result<i32> {
     if !arguments.is_empty() {
         return Err(Error::Usage("usage: caim hash < NUL-separated paths".into()));
     }
@@ -208,11 +206,4 @@ fn hash(arguments: &[String]) -> Result<i32> {
     }
     io::stdout().lock().write_all(text.as_bytes()).map_err(|error| Error::io("stdout", error))?;
     Ok(OK)
-}
-
-pub fn dispatch(arguments: &[String]) -> Result<i32> {
-    match arguments[0].as_str() {
-        "hash-check" => hash_check(&arguments[1..]),
-        _ => hash(&arguments[1..]),
-    }
 }

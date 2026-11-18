@@ -1,3 +1,4 @@
+pub mod commands;
 pub mod completions;
 pub mod concurrency;
 pub mod digests;

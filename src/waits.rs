@@ -8,7 +8,7 @@ use std::collections::BTreeSet;
 use std::fs::File;
 use std::io::{self, Read};
 
-pub const MODES: &[&str] = &["exit", "first-exit", "written", "line", "activity", "run", "stop"];
+const MODES: &[&str] = &["exit", "first-exit", "written", "line", "activity", "run", "stop"];
 
 fn seconds(text: &str, positive: bool) -> Result<f64> {
     let invalid = || Error::Usage(format!("invalid seconds: {text}"));

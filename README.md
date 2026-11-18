@@ -32,7 +32,7 @@ cargo install --locked --git https://github.com/tang3cko/Caim
 
 ## Quick start
 
-Put a `caim.toml` at the root of your project. `caim --init` writes one to start from, named after the directory, with one task and every key a task can take commented out:
+Put a `caim.toml` at the root of your project. `caim init` writes one to start from, named after the directory, with one task and every key a task can take commented out:
 
 ```toml
 name = "my-game"
@@ -73,15 +73,22 @@ $ caim package --platform Win64
 ## Usage
 
 ```
-caim --init
+caim init
+caim version
+caim help [<command> | <task>]
 caim list
 caim <task> --help
+caim <command> --help
 caim [--dry-run] <task> [--name value ...] [<task> [--name value ...] ...]
 caim script FILE
 caim script --check FILE...
 caim script --types
 caim completions bash|zsh
+caim hash < NUL-separated paths
+caim hash-check LIST...
 ```
+
+`--init`, `--version` (`-V`) and `--help` (`-h`) are the same as `init`, `version` and `help`. Every built-in command but `list` works outside a project, and `<command> --help` explains each one; no task can take a built-in command's name or one of these spellings.
 
 Caim finds the project by the nearest `caim.toml` at or above the current directory (`CAIM_ROOT` overrides it) and runs tasks at the project's root. Several tasks on one line run in order, as make runs several targets; the first that does not succeed ends the line. A task runs at most once per line with the same arguments, whether it was named or required; with other arguments, it runs again. Every task's arguments are checked before anything runs. `--dry-run` runs nothing and prints, in the order they would run, each task with its command, directory, arguments, environment names, concurrency groups and hooks. Every command checks the whole of `caim.toml` first, so `caim list` doubles as a check of the file and `--dry-run` as a check of a line.
 
@@ -151,7 +158,7 @@ A task that ran exits with its command's status, 128 plus the signal when a sign
 | Status | Meaning |
 |---|---|
 | 64 | the arguments did not match the declaration |
-| 73 | `--init` found a `caim.toml` already there, or could not write one |
+| 73 | `init` found a `caim.toml` already there, or could not write one |
 | 75 | a concurrency group with `on_busy = "refuse"` was held |
 | 78 | `caim.toml`, a task's `dir` or `CAIM_STALL_SECONDS` is invalid |
 | 124 | the run stalled and was stopped |
@@ -168,7 +175,7 @@ A required task or a lock hook that does not succeed ends the run with its statu
 eval "$(caim completions zsh)"    # or bash; for zsh, after compinit
 ```
 
-Completes `list`, task names, a task's arguments and their choices, from the project the shell is in.
+Completes the built-in commands, task names, a task's arguments and their choices, from the project the shell is in.
 
 ## Waiting from scripts
 

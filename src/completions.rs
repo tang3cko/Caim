@@ -40,8 +40,8 @@ pub fn dispatch(args: &[String]) -> i32 {
 
 pub fn candidates(tasks: &BTreeMap<String, Task>, words: &[String]) -> Vec<String> {
     match words.first().map(String::as_str) {
-        Some("list") => return Vec::new(),
         Some(MODE) => return if words.len() == 1 { vec!["bash".into(), "zsh".into()] } else { Vec::new() },
+        Some(word) if crate::commands::find(word).is_some() => return Vec::new(),
         _ => {}
     }
     let mut current: Option<&Task> = None;
@@ -67,7 +67,10 @@ pub fn candidates(tasks: &BTreeMap<String, Task>, words: &[String]) -> Vec<Strin
             found.extend(task.declaration.args.iter().map(|arg| format!("--{}", arg.name)));
             found.push("--help".into());
         }
-        None if words.is_empty() => found.extend(["list", "--help", "--dry-run"].map(String::from)),
+        None if words.is_empty() => {
+            found.extend(crate::commands::BUILTIN.iter().map(|command| command.name.to_string()));
+            found.push("--dry-run".into());
+        }
         None => found.push("--help".into()),
     }
     found.extend(tasks.values().filter(|task| !task.declaration.hidden).map(|task| task.name.clone()));
