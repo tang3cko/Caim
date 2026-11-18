@@ -19,10 +19,11 @@ use std::rc::Rc;
 pub const MODE: &str = "script";
 
 const PRELUDE: &str = r#"
-local start_task = ...
+local start_task, mark = ...
 local yield = coroutine.yield
 local function wait(...)
   if not coroutine.isyieldable() then error("a deferred function cannot wait", 3) end
+  if mark then mark() end
   return yield(...)
 end
 function caim.exit(pid) return wait("exit", pid) end
@@ -128,6 +129,46 @@ struct Shared {
     deferred: Vec<Function>,
     /// A termination signal that reached a supervised run; the script ends with it.
     interrupted: Option<i32>,
+    /// Whether CAIM_SCRIPT_TRACE asked for each coroutine's waits on stderr.
+    trace: bool,
+    /// Where in the script the latest wait was made, as file:line, when tracing.
+    at: Option<String>,
+}
+
+/// The script's line that called the wait being made: the first Lua frame outside the prelude.
+fn waiting_line(lua: &Lua) -> Option<String> {
+    let frame = |level| {
+        lua.inspect_stack(level, |debug| (debug.source().source.map(|name| name.into_owned()), debug.current_line()))
+    };
+    (1..).map_while(frame).find_map(|(name, line)| {
+        let name = name?;
+        let file = name.strip_prefix('@').or_else(|| name.strip_prefix('='))?;
+        Some(format!("{file}:{}", line?))
+    })
+}
+
+/// A value as a trace line shows it: text and numbers as they are, anything else by its type.
+fn scalar(value: &Value) -> String {
+    match value {
+        Value::Nil => "nil".to_string(),
+        Value::Boolean(flag) => flag.to_string(),
+        Value::Integer(number) => number.to_string(),
+        Value::Number(number) => number.to_string(),
+        Value::String(text) => text.to_string_lossy(),
+        other => other.type_name().to_string(),
+    }
+}
+
+/// Values as a trace line shows them; a list, such as the pids caim.first waits on, by its items.
+fn show<'a>(values: impl Iterator<Item = &'a Value>) -> String {
+    let one = |value: &Value| match value {
+        Value::Table(table) if table.raw_len() > 0 => {
+            let items: Vec<Value> = table.sequence_values::<Value>().filter_map(|item| item.ok()).collect();
+            items.iter().map(scalar).collect::<Vec<_>>().join(",")
+        }
+        other => scalar(other),
+    };
+    values.map(one).collect::<Vec<_>>().join(" ")
 }
 
 /// The script takes the termination signals through its queue, which ignores or blocks them;
@@ -527,8 +568,20 @@ fn install(lua: &Lua, shared: &Rc<RefCell<Shared>>, directory: &str) -> mlua::Re
         Ok(starting.borrow_mut().processes.adopt(child))
     })?;
 
+    // Only a traced script pays for looking up where each wait was made.
+    let marking = shared.clone();
+    let traced = shared.borrow().trace;
+    let mark = if traced {
+        Some(lua.create_function(move |lua, ()| {
+            marking.borrow_mut().at = waiting_line(lua);
+            Ok(())
+        })?)
+    } else {
+        None
+    };
+
     lua.globals().set("caim", caim)?;
-    lua.load(PRELUDE).set_name("prelude").call::<()>(start_task)
+    lua.load(PRELUDE).set_name("prelude").call::<()>((start_task, mark))
 }
 
 /// The name a script's errors and tracebacks give it. A leading @ makes it a file's, read as
@@ -573,7 +626,8 @@ pub fn dispatch(args: &[String]) -> Result<i32> {
     let [_, path] = args else { return Err(Error::Usage("expected FILE or --check FILE...".into())) };
     let lua = Lua::new();
     let main = compile(&lua, path)?;
-    let shared = Rc::new(RefCell::new(Shared::default()));
+    let trace = std::env::var_os("CAIM_SCRIPT_TRACE").is_some_and(|value| !value.is_empty());
+    let shared = Rc::new(RefCell::new(Shared { trace, ..Shared::default() }));
     let full = absolute(path)?;
     let directory = full.rfind('/').map_or("/".to_string(), |slash| full[..slash.max(1)].to_string());
     install(&lua, &shared, &directory).map_err(lua_error)?;
@@ -609,9 +663,17 @@ fn drive(lua: &Lua, shared: &Rc<RefCell<Shared>>, main: Function) -> Result<i32>
         VecDeque::from([(0, lua.create_thread(main).map_err(lua_error)?, MultiValue::new())]);
     let mut parked: Vec<Parked> = Vec::new();
     let mut finished: BTreeMap<u64, MultiValue> = BTreeMap::new();
+    let trace = shared.borrow().trace;
+    let mut begun: Vec<u64> = Vec::new();
 
     loop {
         while let Some((id, thread, input)) = ready.pop_front() {
+            if trace && begun.contains(&id) {
+                eprintln!("caim trace: {id} wakes with {}", show(input.iter()));
+            } else if trace {
+                begun.push(id);
+                eprintln!("caim trace: {id} starts");
+            }
             let output = match thread.resume::<MultiValue>(input) {
                 Ok(output) => output,
                 Err(error) => {
@@ -627,6 +689,11 @@ fn drive(lua: &Lua, shared: &Rc<RefCell<Shared>>, main: Function) -> Result<i32>
                 return Ok(128 + signal);
             }
             if thread.status() != ThreadStatus::Resumable {
+                if trace && output.is_empty() {
+                    eprintln!("caim trace: {id} ends");
+                } else if trace {
+                    eprintln!("caim trace: {id} ends with {}", show(output.iter()));
+                }
                 if id == 0 {
                     // The main chunk ending ends the script, as a shell script's last line does.
                     return Ok(match output.front() {
@@ -645,6 +712,10 @@ fn drive(lua: &Lua, shared: &Rc<RefCell<Shared>>, main: Function) -> Result<i32>
                 }
                 finished.insert(id, output);
                 continue;
+            }
+            if trace {
+                let at = shared.borrow_mut().at.take().map_or_else(String::new, |at| format!(" at {at}"));
+                eprintln!("caim trace: {id} waits {}{at}", show(output.iter()));
             }
             let mut values = output.into_iter();
             let Some(kind) = text(values.next()) else {
