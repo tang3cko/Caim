@@ -198,6 +198,15 @@ fn run_takes_its_idle_from_the_task() {
 }
 
 #[test]
+fn run_starts_its_output_empty() {
+    let dir = TempDir::new();
+    fs::write(dir.path("run.log"), "FAIL from the run before\n").unwrap();
+    let source = r#"print(caim.run{ "echo", "this run", output = caim.args.dir .. "/run.log", idle = 60 })"#;
+    assert_eq!(run(&mut script(&dir, source)), (0, "exit\t0\n".into()));
+    assert_eq!(fs::read_to_string(dir.path("run.log")).unwrap(), "this run\n");
+}
+
+#[test]
 fn a_deferred_function_cleans_up_with_run() {
     let dir = TempDir::new();
     fs::create_dir(dir.path("scratch")).unwrap();
