@@ -2,40 +2,40 @@
 
 lockfile_version = 3
 
-[[tools."github:mozilla/cargo-vet"]]
-version = "0.10.3"
-backend = "github:mozilla/cargo-vet"
-specifiers = ["0.10.3"]
+[[tools."github:EmbarkStudios/cargo-deny"]]
+version = "0.20.2"
+backend = "github:EmbarkStudios/cargo-deny"
+specifiers = ["0.20.2"]
 
-[tools."github:mozilla/cargo-vet"."platforms.linux-x64"]
-checksum = "sha256:e83878b80913fbe43629c28768e14ab51f4e86a4ba8f9dd08cc25b8dbc503c19"
+[tools."github:EmbarkStudios/cargo-deny"."platforms.linux-x64"]
+checksum = "sha256:9f12ed4c49936e09b48bf862b595cde2fe64fcbd9d74dfacac6131ca824c8d5f"
 checksum_source = "mise-versions"
-url = "https://github.com/mozilla/cargo-vet/releases/download/v0.10.3/cargo-vet-x86_64-unknown-linux-gnu.tar.xz"
-url_api = "https://api.github.com/repos/mozilla/cargo-vet/releases/assets/666781870"
+url = "https://github.com/EmbarkStudios/cargo-deny/releases/download/0.20.2/cargo-deny-0.20.2-x86_64-unknown-linux-musl.tar.gz"
+url_api = "https://api.github.com/repos/EmbarkStudios/cargo-deny/releases/assets/471598214"
 
-[tools."github:mozilla/cargo-vet"."platforms.linux-x64-musl"]
-checksum = "sha256:e83878b80913fbe43629c28768e14ab51f4e86a4ba8f9dd08cc25b8dbc503c19"
+[tools."github:EmbarkStudios/cargo-deny"."platforms.linux-x64-musl"]
+checksum = "sha256:9f12ed4c49936e09b48bf862b595cde2fe64fcbd9d74dfacac6131ca824c8d5f"
 checksum_source = "mise-versions"
-url = "https://github.com/mozilla/cargo-vet/releases/download/v0.10.3/cargo-vet-x86_64-unknown-linux-gnu.tar.xz"
-url_api = "https://api.github.com/repos/mozilla/cargo-vet/releases/assets/666781870"
+url = "https://github.com/EmbarkStudios/cargo-deny/releases/download/0.20.2/cargo-deny-0.20.2-x86_64-unknown-linux-musl.tar.gz"
+url_api = "https://api.github.com/repos/EmbarkStudios/cargo-deny/releases/assets/471598214"
 
-[tools."github:mozilla/cargo-vet"."platforms.macos-arm64"]
-checksum = "sha256:a83f7d6f48a069890743ba61f7637660c8577f263efd64fee47e673632f0e423"
+[tools."github:EmbarkStudios/cargo-deny"."platforms.macos-arm64"]
+checksum = "sha256:fe67d82a10d8597a3549364cb733a3f9cc1bfff9031b7ae46384a9f2a72090c3"
 checksum_source = "mise-versions"
-url = "https://github.com/mozilla/cargo-vet/releases/download/v0.10.3/cargo-vet-aarch64-apple-darwin.tar.xz"
-url_api = "https://api.github.com/repos/mozilla/cargo-vet/releases/assets/666781830"
+url = "https://github.com/EmbarkStudios/cargo-deny/releases/download/0.20.2/cargo-deny-0.20.2-aarch64-apple-darwin.tar.gz"
+url_api = "https://api.github.com/repos/EmbarkStudios/cargo-deny/releases/assets/471597689"
 
-[tools."github:mozilla/cargo-vet"."platforms.macos-x64"]
-checksum = "sha256:d06a5078c3f4c589211ce011dc9329a5849c8153a41b6624112e7318d93c0b6d"
+[tools."github:EmbarkStudios/cargo-deny"."platforms.macos-x64"]
+checksum = "sha256:248da7f581724e470071990c088ffc55c811981715f4cbdb258621fb79f8b7a6"
 checksum_source = "mise-versions"
-url = "https://github.com/mozilla/cargo-vet/releases/download/v0.10.3/cargo-vet-x86_64-apple-darwin.tar.xz"
-url_api = "https://api.github.com/repos/mozilla/cargo-vet/releases/assets/666781829"
+url = "https://github.com/EmbarkStudios/cargo-deny/releases/download/0.20.2/cargo-deny-0.20.2-x86_64-apple-darwin.tar.gz"
+url_api = "https://api.github.com/repos/EmbarkStudios/cargo-deny/releases/assets/471598357"
 
-[tools."github:mozilla/cargo-vet"."platforms.windows-x64"]
-checksum = "sha256:855fda4724dada8ba235aec7c0da7d3b28d1697c946627733143fe37444dd510"
+[tools."github:EmbarkStudios/cargo-deny"."platforms.windows-x64"]
+checksum = "sha256:975a22143262fd27476d19ee00c7af67978426e40e1dee94eed6bbade1cf87dc"
 checksum_source = "mise-versions"
-url = "https://github.com/mozilla/cargo-vet/releases/download/v0.10.3/cargo-vet-x86_64-pc-windows-msvc.zip"
-url_api = "https://api.github.com/repos/mozilla/cargo-vet/releases/assets/666781828"
+url = "https://github.com/EmbarkStudios/cargo-deny/releases/download/0.20.2/cargo-deny-0.20.2-x86_64-pc-windows-msvc.tar.gz"
+url_api = "https://api.github.com/repos/EmbarkStudios/cargo-deny/releases/assets/471599057"
 
 [[tools.rust]]
 version = "1.100.0"

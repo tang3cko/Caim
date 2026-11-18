@@ -1,0 +1,13 @@
+[advisories]
+yanked = "deny"
+
+[licenses]
+# The licenses tasks/licenses accepts for the release's THIRD_PARTY_LICENSES.
+allow = ["MIT", "Apache-2.0", "Unlicense", "Unicode-3.0"]
+
+[bans]
+wildcards = "deny"
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
