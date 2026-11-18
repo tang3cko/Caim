@@ -584,12 +584,23 @@ fn install(lua: &Lua, shared: &Rc<RefCell<Shared>>, directory: &str) -> mlua::Re
     lua.load(PRELUDE).set_name("prelude").call::<()>((start_task, mark))
 }
 
+/// The name a script's errors and tracebacks give it. A leading @ makes it a file's, read as
+/// path:line, which editors and debuggers map back to the file, rather than [string "path"]:line.
+/// The path is taken from the current directory when the script is under it, since Lua cuts a
+/// name longer than about 60 bytes down to its end.
+fn chunk_name(path: &str) -> String {
+    let under = std::env::current_dir().ok().and_then(|current| {
+        let current = std::fs::canonicalize(current).ok()?;
+        let file = std::fs::canonicalize(path).ok()?;
+        file.strip_prefix(&current).ok().map(|rest| rest.to_string_lossy().into_owned())
+    });
+    format!("@{}", under.unwrap_or_else(|| path.to_string()))
+}
+
 /// Reads and compiles a script without running it.
 fn compile(lua: &Lua, path: &str) -> Result<Function> {
     let source = std::fs::read_to_string(path).map_err(|error| Error::io(format!("read {path}"), error))?;
-    // A leading @ makes the name a file's: errors and tracebacks read path:line, which editors
-    // and debuggers map back to the file, instead of [string "path"]:line.
-    lua.load(source).set_name(format!("@{path}")).into_function().map_err(lua_error)
+    lua.load(source).set_name(chunk_name(path)).into_function().map_err(lua_error)
 }
 
 /// Compiles every script given and reports each that does not compile, running none of them.
