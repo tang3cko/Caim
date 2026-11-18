@@ -208,6 +208,32 @@ fn check_compiles_without_running() {
     assert_eq!(run(caim().args(["script", "--check"])).0, 64);
 }
 
+#[test]
+fn a_trace_shows_each_wait_and_where_it_was_made() {
+    let dir = TempDir::new();
+    let source = "local pid = caim.spawn{ 'sh', '-c', 'exit 3' }\nlocal id = caim.go(function() return 'done' end)\nprint(caim.join(id), caim.exit(pid))\n";
+    assert_eq!(run(&mut script(&dir, source)), (0, "done\t3\n".into()));
+    let (status, output) = run(script(&dir, source).env("CAIM_SCRIPT_TRACE", "1"));
+    assert_eq!(status, 0);
+    let main = dir.text("main.lua");
+    let lines: Vec<&str> = output.lines().filter(|line| line.starts_with("caim trace:")).collect();
+    let pid = lines
+        .iter()
+        .find_map(|line| line.strip_prefix("caim trace: 0 waits exit "))
+        .map(|rest| rest.split(' ').next().unwrap());
+    let expected = [
+        "caim trace: 0 starts".to_string(),
+        format!("caim trace: 0 waits join 1 at {main}:3"),
+        "caim trace: 1 starts".into(),
+        "caim trace: 1 ends with done".into(),
+        "caim trace: 0 wakes with done".into(),
+        format!("caim trace: 0 waits exit {} at {main}:3", pid.unwrap_or("?")),
+        "caim trace: 0 wakes with 3".into(),
+        "caim trace: 0 ends".into(),
+    ];
+    assert_eq!(lines, expected, "{output}");
+}
+
 /// A script with none of the caller's CAIM_ variables.
 fn isolated(dir: &TempDir, source: &str) -> Command {
     let mut command = script(dir, source);

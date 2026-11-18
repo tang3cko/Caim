@@ -242,6 +242,15 @@ A script's integer return value is its exit status, 0 otherwise, and it ends whe
 
 An error names the file and line, `tasks/build.lua:12: message`, with a stack traceback. `caim script --check FILE...` compiles each script without running it, reports every one that does not compile, and exits 125 if any does not, 0 otherwise; it checks syntax only, not names or the `caim` functions' arguments.
 
+When a script waits on the wrong thing, `CAIM_SCRIPT_TRACE=1` shows on stderr what each coroutine does, numbered as `caim.go` numbers them and 0 for the chunk itself: when it starts, each wait with its arguments and the line of the script that made it, the values it wakes with, and its end. The lines are for people and may change in any release; tasks the script invokes inherit the variable.
+
+```
+caim trace: 0 starts
+caim trace: 0 waits line /work/run.log ^READY 4242 at tasks/boot.lua:8
+caim trace: 0 wakes with true
+caim trace: 0 ends
+```
+
 ### Verdicts
 
 A script that judges a run case by case, each PASS, FAIL or VOID (could not be judged), collects them with `caim.verdict()`:
