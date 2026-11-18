@@ -84,7 +84,6 @@ end
 const STOP_STEPS: [StopStep; 2] =
     [StopStep { signal: libc::SIGTERM, grace: 20.0 }, StopStep { signal: libc::SIGKILL, grace: 20.0 }];
 
-/// The processes this script started and what it knows of their ends.
 #[derive(Default)]
 struct Processes {
     children: BTreeMap<i32, Child>,
@@ -606,13 +605,11 @@ fn chunk_name(path: &str) -> String {
     format!("@{}", under.unwrap_or_else(|| path.to_string()))
 }
 
-/// Reads and compiles a script without running it.
 fn compile(lua: &Lua, path: &str) -> Result<Function> {
     let source = std::fs::read_to_string(path).map_err(|error| Error::io(format!("read {path}"), error))?;
     lua.load(source).set_name(chunk_name(path)).into_function().map_err(lua_error)
 }
 
-/// Compiles every script given and reports each that does not compile, running none of them.
 fn check(paths: &[String]) -> Result<i32> {
     if paths.is_empty() {
         return Err(Error::Usage("--check expected FILE...".into()));
