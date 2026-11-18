@@ -19,6 +19,7 @@ use std::rc::Rc;
 pub const MODE: &str = "script";
 
 const PRELUDE: &str = r#"
+local start_task = ...
 local yield = coroutine.yield
 local function wait(...)
   if not coroutine.isyieldable() then error("a deferred function cannot wait", 3) end
@@ -29,6 +30,7 @@ function caim.first(pids) return wait("first", pids) end
 function caim.line(path, pattern, pid) return wait("line", path, pattern, pid) end
 function caim.join(id) return wait("join", id) end
 function caim.usage(message) return wait("usage", message) end
+function caim.invoke(name, args) return caim.exit(start_task(name, args)) end
 
 local rank = { PASS = 0, FAIL = 1, VOID = 2 }
 local names = { [0] = "PASS", "FAIL", "VOID" }
@@ -258,7 +260,7 @@ fn arguments(lua: &Lua) -> mlua::Result<Table> {
     Ok(args)
 }
 
-fn install(lua: &Lua, shared: &Rc<RefCell<Shared>>) -> mlua::Result<()> {
+fn install(lua: &Lua, shared: &Rc<RefCell<Shared>>, directory: &str) -> mlua::Result<()> {
     let caim = lua.create_table()?;
     caim.set("args", arguments(lua)?)?;
     caim.set("task", std::env::var("CAIM_TASK").unwrap_or_default())?;
@@ -452,8 +454,81 @@ fn install(lua: &Lua, shared: &Rc<RefCell<Shared>>) -> mlua::Result<()> {
         })?,
     )?;
 
+    caim.set(
+        "hash",
+        lua.create_function(|lua, paths: Vec<String>| {
+            Ok(match crate::digests::stamp(&paths) {
+                Ok(text) => MultiValue::from_vec(vec![Value::String(lua.create_string(text)?)]),
+                Err(why) => MultiValue::from_vec(vec![Value::Nil, Value::String(lua.create_string(why)?)]),
+            })
+        })?,
+    )?;
+
+    caim.set(
+        "fresh",
+        lua.create_function(|lua, stamps: Vec<String>| {
+            let stale = lua.create_table()?;
+            let entry = |list: &str, path: Option<&str>| -> mlua::Result<Table> {
+                let entry = lua.create_table()?;
+                entry.set("list", list)?;
+                entry.set("path", path)?;
+                Ok(entry)
+            };
+            let (present, absent): (Vec<String>, Vec<String>) =
+                stamps.into_iter().partition(|stamp| Path::new(stamp).is_file());
+            for stamp in &absent {
+                stale.push(entry(stamp, None)?)?;
+            }
+            let entries =
+                crate::digests::stale_entries(&present).map_err(|error| mlua::Error::runtime(error.to_string()))?;
+            for (index, path) in entries {
+                stale.push(entry(&present[index], Some(&path))?)?;
+            }
+            Ok((stale.is_empty(), stale))
+        })?,
+    )?;
+
+    // Modules come from next to the script and from the project's lua/ directory, and nowhere
+    // else: not the current directory, and no compiled ones.
+    let package: Table = lua.globals().get("package")?;
+    let places = [directory.to_string(), format!("{}/lua", root.to_string_lossy())];
+    let path: Vec<String> =
+        places.iter().flat_map(|place| [format!("{place}/?.lua"), format!("{place}/?/init.lua")]).collect();
+    package.set("path", path.join(";"))?;
+    package.set("cpath", "")?;
+
+    let starting = shared.clone();
+    let start_task = lua.create_function(move |_, (name, args): (String, Option<Table>)| {
+        let mut options: Vec<(String, Value)> = match args {
+            Some(args) => args.pairs::<String, Value>().collect::<mlua::Result<_>>()?,
+            None => Vec::new(),
+        };
+        options.sort_by(|a, b| a.0.cmp(&b.0));
+        let mut command = Command::new(std::env::current_exe().map_err(mlua::Error::external)?);
+        command.arg(&name).stdin(Stdio::null());
+        for (key, value) in options {
+            match value {
+                Value::Boolean(true) => command.arg(format!("--{key}")),
+                Value::Boolean(false) | Value::Nil => continue,
+                Value::String(text) => command.arg(format!("--{key}={}", text.to_str()?)),
+                Value::Integer(number) => command.arg(format!("--{key}={number}")),
+                Value::Number(number) => command.arg(format!("--{key}={number}")),
+                _ => return Err(mlua::Error::runtime(format!("{key}: an argument is a string, number or boolean"))),
+            };
+        }
+        // The invoked task sees its own arguments, not those of the task running this script.
+        for (key, _) in std::env::vars_os() {
+            if key.to_string_lossy().starts_with("CAIM_ARG_") {
+                command.env_remove(key);
+            }
+        }
+        default_signals(&mut command);
+        let child = command.spawn().map_err(|error| mlua::Error::runtime(format!("caim {name}: {error}")))?;
+        Ok(starting.borrow_mut().processes.adopt(child))
+    })?;
+
     lua.globals().set("caim", caim)?;
-    lua.load(PRELUDE).set_name("prelude").exec()
+    lua.load(PRELUDE).set_name("prelude").call::<()>(start_task)
 }
 
 pub fn dispatch(args: &[String]) -> Result<i32> {
@@ -461,7 +536,9 @@ pub fn dispatch(args: &[String]) -> Result<i32> {
     let source = std::fs::read_to_string(path).map_err(|error| Error::io(format!("read {path}"), error))?;
     let lua = Lua::new();
     let shared = Rc::new(RefCell::new(Shared::default()));
-    install(&lua, &shared).map_err(lua_error)?;
+    let full = absolute(path)?;
+    let directory = full.rfind('/').map_or("/".to_string(), |slash| full[..slash.max(1)].to_string());
+    install(&lua, &shared, &directory).map_err(lua_error)?;
     let main = lua.load(source).set_name(path.as_str()).into_function().map_err(lua_error)?;
     let ended = drive(&lua, &shared, main);
     // Last registered first, whatever ended the script.

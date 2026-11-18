@@ -135,10 +135,20 @@ fn read_list(list: &str, index: usize, lines: &mut Vec<Line>) -> Result<()> {
     Ok(())
 }
 
-fn hash_check(lists: &[String]) -> Result<i32> {
-    if lists.is_empty() {
-        return Err(Error::Usage("usage: caim hash-check LIST...".into()));
+/// `shasum -a 256` lines for the paths, or the first one that cannot be read and why.
+pub(crate) fn stamp(paths: &[String]) -> std::result::Result<String, String> {
+    let mut text = String::new();
+    for (path, digest) in paths.iter().zip(hash_all(paths)) {
+        match digest {
+            Ok(digest) => text.push_str(&format!("{digest}  {path}\n")),
+            Err(error) => return Err(format!("{path}: {error}")),
+        }
     }
+    Ok(text)
+}
+
+/// The (list, path) pairs, by the list's position, whose file no longer has the digest the list holds.
+pub(crate) fn stale_entries(lists: &[String]) -> Result<Vec<(usize, String)>> {
     let mut lines = Vec::new();
     for (index, list) in lists.iter().enumerate() {
         read_list(list, index, &mut lines)?;
@@ -152,16 +162,26 @@ fn hash_check(lists: &[String]) -> Result<i32> {
         });
     }
     let digests = hash_all(&paths);
-    let mut output = io::stdout().lock();
-    let mut stale = false;
+    let mut stale = Vec::new();
     for line in &lines {
         let current = &digests[position[line.path.as_str()]];
         if current.as_ref().map_or(true, |digest| *digest != line.digest) {
-            stale = true;
-            writeln!(output, "{}\t{}", lists[line.list], line.path).map_err(|error| Error::io("stdout", error))?;
+            stale.push((line.list, line.path.clone()));
         }
     }
-    Ok(if stale { STALE } else { OK })
+    Ok(stale)
+}
+
+fn hash_check(lists: &[String]) -> Result<i32> {
+    if lists.is_empty() {
+        return Err(Error::Usage("usage: caim hash-check LIST...".into()));
+    }
+    let stale = stale_entries(lists)?;
+    let mut output = io::stdout().lock();
+    for (list, path) in &stale {
+        writeln!(output, "{}\t{path}", lists[*list]).map_err(|error| Error::io("stdout", error))?;
+    }
+    Ok(if stale.is_empty() { OK } else { STALE })
 }
 
 fn hash(arguments: &[String]) -> Result<i32> {
