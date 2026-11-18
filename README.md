@@ -220,6 +220,11 @@ return finished and code or 1
 | `caim.go(function)` | Starts a coroutine and returns its id; it runs when the script waits |
 | `caim.join(id)` | Waits for a coroutine and returns what it returned |
 | `caim.declare("log" or "dir", PATH)` | Declares a progress source to the caim running the task, as `CAIM_DECLARED` does; returns `false` when there is no such file to append to |
+| `caim.usage(MESSAGE)` | Prints the message to stderr and ends the script with 64, from any coroutine |
+| `caim.flags(args, { name = "--option", ... })` | The words of a command line: `"--option", value` for each argument of `args` (usually `caim.args`) that is not empty, in the order of the argument names |
+| `caim.env(NAME, DEFAULT)` | The argument `NAME`, else the environment variable `NAME` upper-cased with `-` as `_`, else `DEFAULT` (nil without one); an empty value counts as none |
+| `caim.root` | The project's root: `CAIM_ROOT`, else the nearest directory at or above the current one with a `caim.toml`, else the current directory |
+| `caim.abs(PATH)` | The path made absolute against the current directory, with `.` and `..` resolved as text |
 
 A script's integer return value is its exit status, 0 otherwise, and it ends when its chunk does: processes it started and coroutines still waiting are not stopped. A Lua error, or a script that cannot be read, ends it with 125 and the message on stderr; a missing `FILE` is 64. A script in which every coroutine waits on another fails with 125 rather than hang. `script` is not a task name.
 

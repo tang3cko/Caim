@@ -763,21 +763,24 @@ struct ProjectFile {
     tasks: BTreeMap<String, Declaration>,
 }
 
-fn project() -> Result<(PathBuf, ProjectFile)> {
-    let root = match std::env::var_os("CAIM_ROOT") {
-        Some(root) => PathBuf::from(root),
-        None => {
-            let mut directory = std::env::current_dir().map_err(|error| Error::io("current directory", error))?;
-            loop {
-                if directory.join(PROJECT_FILE).is_file() {
-                    break directory;
-                }
-                if !directory.pop() {
-                    return Err(setup(format!("no {PROJECT_FILE} in the current directory or above it")));
-                }
-            }
+/// The project's root: CAIM_ROOT, else the nearest directory at or above the current one with a caim.toml.
+pub(crate) fn root() -> Result<PathBuf> {
+    if let Some(root) = std::env::var_os("CAIM_ROOT") {
+        return Ok(PathBuf::from(root));
+    }
+    let mut directory = std::env::current_dir().map_err(|error| Error::io("current directory", error))?;
+    loop {
+        if directory.join(PROJECT_FILE).is_file() {
+            return Ok(directory);
         }
-    };
+        if !directory.pop() {
+            return Err(setup(format!("no {PROJECT_FILE} in the current directory or above it")));
+        }
+    }
+}
+
+fn project() -> Result<(PathBuf, ProjectFile)> {
+    let root = root()?;
     let path = root.join(PROJECT_FILE);
     let text = fs::read_to_string(&path).map_err(|error| Error::io(path.display(), error))?;
     let file: ProjectFile = toml::from_str(&text).map_err(|error| setup(format!("{}: {error}", path.display())))?;

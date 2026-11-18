@@ -182,6 +182,73 @@ fn failures_are_reported_not_hidden() {
     assert!(output.contains("nothing can wake"), "{output}");
 }
 
+/// A script with none of the caller's CAIM_ variables.
+fn isolated(dir: &TempDir, source: &str) -> Command {
+    let mut command = script(dir, source);
+    for (key, _) in std::env::vars() {
+        if key.starts_with("CAIM_") {
+            command.env_remove(key);
+        }
+    }
+    command.env_remove("CAIM_ARG_DIR");
+    command
+}
+
+#[test]
+fn usage_ends_the_script_with_64_from_any_coroutine() {
+    let dir = TempDir::new();
+    let (status, output) = run(&mut isolated(&dir, "caim.usage('usage: build FILE')\nprint('not reached')"));
+    assert_eq!((status, output.as_str()), (64, "usage: build FILE\n"));
+    let source = "caim.join(caim.go(function() caim.usage('from a coroutine') end))\nprint('not reached')";
+    assert_eq!(run(&mut isolated(&dir, source)), (64, "from a coroutine\n".into()));
+}
+
+#[test]
+fn flags_turn_the_non_empty_arguments_into_options_in_name_order() {
+    let dir = TempDir::new();
+    let source = r#"
+        local args = { tool = "alpha", name = "a b", clean = "" }
+        local words = caim.flags(args, { tool = "--tool", name = "--name", clean = "--clean", absent = "--absent" })
+        print(#words, table.concat(words, "|"))
+        print(#caim.flags({}, {}))
+        print(pcall(caim.flags, args, { name = {} }))
+    "#;
+    let (status, output) = run(&mut isolated(&dir, source));
+    assert_eq!(status, 0, "{output}");
+    let mut lines = output.lines();
+    assert_eq!(lines.next(), Some("4\t--name|a b|--tool|alpha"));
+    assert_eq!(lines.next(), Some("0"));
+    assert!(lines.next().is_some_and(|line| line.starts_with("false\t")), "{output}");
+}
+
+#[test]
+fn env_takes_the_argument_then_the_variable_then_the_default() {
+    let dir = TempDir::new();
+    let source = r#"print(caim.env("tool", "default"), caim.env("two-words"))"#;
+    assert_eq!(run(&mut isolated(&dir, source)).1, "default\tnil\n");
+    assert_eq!(run(isolated(&dir, source).env("TOOL", "variable").env("TWO_WORDS", "v")).1, "variable\tv\n");
+    let (_, output) = run(isolated(&dir, source).env("TOOL", "variable").env("CAIM_ARG_TOOL", "argument"));
+    assert_eq!(output, "argument\tnil\n");
+    let (_, output) = run(isolated(&dir, source).env("TOOL", "variable").env("CAIM_ARG_TOOL", ""));
+    assert_eq!(output, "variable\tnil\n", "an empty argument counts as none");
+}
+
+#[test]
+fn root_is_the_project_and_abs_resolves_against_the_current_directory() {
+    let project = TempDir::new();
+    fs::write(project.path("caim.toml"), "name = \"case\"\n").unwrap();
+    fs::create_dir_all(project.path("sub/deeper")).unwrap();
+    let source = "print(caim.root, caim.abs('x/../y.log'), caim.abs('/a/b'), (pcall(caim.abs, '')))";
+    let (status, output) = run(isolated(&project, source).current_dir(project.path("sub/deeper")));
+    let expected = format!("{}\t{}/y.log\t/a/b\tfalse\n", project.0.display(), project.text("sub/deeper"));
+    assert_eq!((status, output), (0, expected));
+    let (_, output) = run(isolated(&project, "print(caim.root)").env("CAIM_ROOT", "/elsewhere"));
+    assert_eq!(output, "/elsewhere\n");
+    let bare = TempDir::new();
+    let (_, output) = run(isolated(&bare, "print(caim.root)").current_dir(&bare.0));
+    assert_eq!(output, format!("{}\n", bare.0.display()));
+}
+
 #[test]
 fn script_is_not_a_task_name() {
     let dir = TempDir::new();
