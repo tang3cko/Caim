@@ -160,6 +160,8 @@ fn a_broken_declaration_stops_everything_as_setup() {
         ("Bad_Group", "grouped", SIMPLE, "group \"Bad_Group\" is not lowercase letters"),
         ("check", "stop", SIMPLE, "not a runner command"),
         ("check", "list", SIMPLE, "not a runner command"),
+        ("check", "init", SIMPLE, "not a runner command"),
+        ("check", "version", SIMPLE, "not a runner command"),
         ("check", "hooked", "description = \"t\"\nlock = \"absent\"\n", "no hook absent in [hooks]"),
         ("check", "needy", "description = \"t\"\nrequires = [\"ghost\"]\n", "requires unknown task ghost"),
         ("check", "loop", "description = \"t\"\nrequires = [\"loop\"]\n", "requirement cycle"),
@@ -1356,7 +1358,9 @@ fn completion_words_follow_the_command_line() {
         assert_eq!(status, 0, "{output}");
         output.lines().map(String::from).collect()
     };
-    assert_eq!(words(&[]), ["list", "--help", "--dry-run", "build", "package"]);
+    let mut top: Vec<String> = caim::commands::BUILTIN.iter().map(|command| command.name.to_string()).collect();
+    top.extend(["--dry-run", "build", "package"].map(String::from));
+    assert_eq!(words(&[]), top);
     assert_eq!(words(&["package"]), ["--platform", "--fast", "--help", "build", "package"]);
     assert_eq!(words(&["package", "--platform"]), ["Mac", "Win64"]);
     assert_eq!(words(&["package", "--fast"]), ["--platform", "--fast", "--help", "build", "package"]);

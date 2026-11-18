@@ -1,7 +1,6 @@
 use crate::concurrency::{self, Concurrency, Holder, Outcome};
 use crate::error::{BUSY, CANNOT_EXECUTE, CONFIG, Error, FAILED, NOT_FOUND, OK, Result, STALLED, USAGE, not_started};
 use crate::native::{self, Ended, Report, RunPlan, StopStep, WatchPlan};
-use crate::{digests, waits};
 use regex::Regex;
 use serde::Deserialize;
 use std::cell::RefCell;
@@ -184,19 +183,13 @@ pub(crate) fn valid_name(name: &str) -> bool {
         && chars.all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
 }
 
-fn reserved(name: &str) -> bool {
-    waits::MODES.contains(&name)
-        || digests::MODES.contains(&name)
-        || ["list", "help", crate::completions::MODE, crate::script::MODE].contains(&name)
-}
-
 fn executable(path: &Path) -> bool {
     let Ok(name) = CString::new(path.as_os_str().as_encoded_bytes()) else { return false };
     unsafe { libc::access(name.as_ptr(), libc::X_OK) == 0 }
 }
 
 fn check(name: &str, declaration: &Declaration, at: &str, hooks: &Commands) -> Result<()> {
-    if !valid_name(name) || reserved(name) {
+    if !valid_name(name) || crate::commands::reserved(name) {
         return Err(setup(format!(
             "{at}: a task name is lowercase letters, digits and dashes, and not a runner command"
         )));
@@ -728,7 +721,7 @@ fn dry_run(order: &[(&Task, BTreeMap<String, String>)]) -> i32 {
     OK
 }
 
-fn list(tasks: &BTreeMap<String, Task>) -> i32 {
+pub fn list(tasks: &BTreeMap<String, Task>) -> i32 {
     let shown: Vec<&Task> = tasks.values().filter(|task| !task.declaration.hidden).collect();
     let mut groups: BTreeMap<Option<&str>, Vec<&Task>> = BTreeMap::new();
     for task in shown {
@@ -745,10 +738,6 @@ fn list(tasks: &BTreeMap<String, Task>) -> i32 {
         }
     }
     OK
-}
-
-fn general_usage() -> &'static str {
-    "usage: caim list | caim --init | caim [--help] [--dry-run] <task> [--name value ...] [<task> [--name value ...] ...]"
 }
 
 pub const PROJECT_FILE: &str = "caim.toml";
@@ -800,84 +789,63 @@ pub fn load() -> Result<BTreeMap<String, Task>> {
 }
 
 pub fn main(args: &[String]) -> i32 {
-    let help = matches!(args.first().map(String::as_str), None | Some("--help") | Some("-h") | Some("help"));
     let found = project().and_then(|(root, file)| {
         discover(&root, file.hooks, file.tasks).map(|(hooks, tasks)| (root, file.name, hooks, tasks))
     });
     let (root, project, hooks, tasks) = match found {
         Ok(found) => found,
-        Err(error) if help => {
-            println!("{}", general_usage());
-            eprintln!("caim: {error}");
-            return OK;
-        }
         Err(error) => {
             eprintln!("caim: {error}");
             return CONFIG;
         }
     };
-    if help {
-        println!("{}\n", general_usage());
-        return list(&tasks);
+    let named = match name_tasks(&tasks, args) {
+        Ok(named) if !named.tasks.is_empty() => named,
+        Ok(_) => {
+            eprint!("{}", crate::commands::general_usage());
+            return USAGE;
+        }
+        Err(message) => {
+            eprintln!("{message}");
+            return USAGE;
+        }
+    };
+    if named.help {
+        let texts: Vec<String> = named.tasks.iter().map(|(task, _)| usage(task)).collect();
+        print!("{}", texts.join("\n"));
+        return OK;
     }
-    match args.first().map(String::as_str) {
-        Some("list") => match &args[1..] {
-            [] => list(&tasks),
-            _ => {
-                eprintln!("{}", general_usage());
-                USAGE
+    let mut runs = Vec::new();
+    for (task, options) in &named.tasks {
+        match parse_args(task, options) {
+            Ok(values) => runs.push((*task, values)),
+            Err(message) => {
+                eprintln!("{}: {message}\n\n{}", task.name, usage(task));
+                return USAGE;
             }
-        },
-        _ => {
-            let named = match name_tasks(&tasks, args) {
-                Ok(named) if !named.tasks.is_empty() => named,
-                Ok(_) => {
-                    eprintln!("{}", general_usage());
-                    return USAGE;
-                }
-                Err(message) => {
-                    eprintln!("{message}");
-                    return USAGE;
-                }
-            };
-            if named.help {
-                let texts: Vec<String> = named.tasks.iter().map(|(task, _)| usage(task)).collect();
-                print!("{}", texts.join("\n"));
-                return OK;
-            }
-            let mut runs = Vec::new();
-            for (task, options) in &named.tasks {
-                match parse_args(task, options) {
-                    Ok(values) => runs.push((*task, values)),
-                    Err(message) => {
-                        eprintln!("{}: {message}\n\n{}", task.name, usage(task));
-                        return USAGE;
-                    }
-                }
-            }
-            let order = match plan(&tasks, &runs) {
-                Ok(order) => order,
-                Err(message) => {
-                    eprintln!("{message}");
-                    return USAGE;
-                }
-            };
-            if named.dry_run {
-                return dry_run(&order);
-            }
-            let mut runner = Runner::new(root, project, hooks, &tasks);
-            for (task, values) in runs {
-                if runner.done.contains(&run_key(&task.name, &values)) {
-                    continue;
-                }
-                let status = runner.run(task, &values);
-                if status != OK {
-                    return status;
-                }
-            }
-            OK
         }
     }
+    let order = match plan(&tasks, &runs) {
+        Ok(order) => order,
+        Err(message) => {
+            eprintln!("{message}");
+            return USAGE;
+        }
+    };
+    if named.dry_run {
+        return dry_run(&order);
+    }
+    let mut runner = Runner::new(root, project, hooks, &tasks);
+    for (task, values) in runs {
+        if runner.done.contains(&run_key(&task.name, &values)) {
+            continue;
+        }
+        let status = runner.run(task, &values);
+        if status != OK {
+            return status;
+        }
+    }
+    OK
 }
 
 enum Reason {

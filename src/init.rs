@@ -1,10 +1,8 @@
-use crate::error::{CANT_CREATE, FAILED, OK, USAGE};
+use crate::error::{CANT_CREATE, FAILED, OK};
 use crate::tasks::{PROJECT_FILE, valid_name};
 use std::fs::OpenOptions;
 use std::io::{ErrorKind, Write};
 use std::path::Path;
-
-pub const FLAG: &str = "--init";
 
 // Lines of the reference are commented with "# ", so removing that prefix gives a valid caim.toml; prose is
 // commented with "##". tests/init.rs holds the file to that.
@@ -51,11 +49,7 @@ run = "echo hello"
 # run = "exit $CAIM_STATUS"
 "#;
 
-pub fn dispatch(args: &[String]) -> i32 {
-    if args.len() != 1 {
-        eprintln!("usage: caim {FLAG}");
-        return USAGE;
-    }
+pub(crate) fn write() -> i32 {
     let directory = match std::env::current_dir() {
         Ok(directory) => directory,
         Err(error) => {

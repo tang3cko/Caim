@@ -4,7 +4,7 @@ use std::fs;
 use std::path::Path;
 
 fn init(dir: &Path, args: &[&str]) -> (i32, String) {
-    run(caim().arg("--init").args(args).current_dir(dir).env_remove("CAIM_ROOT"))
+    run(caim().arg("init").args(args).current_dir(dir).env_remove("CAIM_ROOT"))
 }
 
 fn in_project(dir: &Path, args: &[&str]) -> (i32, String) {
