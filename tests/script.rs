@@ -185,13 +185,16 @@ fn failures_are_reported_not_hidden() {
 #[test]
 fn an_error_names_the_file_and_line() {
     let dir = TempDir::new();
-    let (status, output) = run(&mut script(&dir, "local function fail()\n  error('boom')\nend\nfail()\n"));
+    // Run from the script's directory: Lua cuts a long name down to its end, and a temporary
+    // directory's path is long enough on macOS to lose its start.
+    let source = "local function fail()\n  error('boom')\nend\nfail()\n";
+    let (status, output) = run(script(&dir, source).current_dir(&dir.0));
     assert_eq!(status, 125);
-    assert!(output.contains(&format!("{}:2: boom", dir.text("main.lua"))), "{output}");
+    assert!(output.starts_with("caim script: runtime error: main.lua:2: boom\n"), "{output}");
     assert!(output.contains("stack traceback:") && !output.contains("[string"), "{output}");
-    let (status, output) = run(&mut script(&dir, "local x = = 1"));
+    let (status, output) = run(script(&dir, "local x = = 1").current_dir(&dir.0));
     assert_eq!(status, 125);
-    assert!(output.contains(&format!("{}:1:", dir.text("main.lua"))) && !output.contains("[string"), "{output}");
+    assert!(output.contains(": main.lua:1:") && !output.contains("[string"), "{output}");
 }
 
 /// A script with none of the caller's CAIM_ variables.
