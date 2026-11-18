@@ -42,7 +42,7 @@ function Verdict:finish() end
 ---@class caim.RunSpec
 ---@field [integer] string The command and its arguments
 ---@field output string The file for the command's output, which the stall guard watches
----@field idle number Seconds without progress after which the command is stopped
+---@field idle? number Seconds without progress before the command is stopped; the task's idle time (`CAIM_STALL_SECONDS`), else 180, by default
 ---@field steps? string[] Stop steps as `SIGNAL:SECONDS`, `{ "TERM:20", "KILL:20" }` by default
 ---@field env? table<string, string> Variables added to the environment
 
