@@ -182,6 +182,18 @@ fn failures_are_reported_not_hidden() {
     assert!(output.contains("nothing can wake"), "{output}");
 }
 
+#[test]
+fn an_error_names_the_file_and_line() {
+    let dir = TempDir::new();
+    let (status, output) = run(&mut script(&dir, "local function fail()\n  error('boom')\nend\nfail()\n"));
+    assert_eq!(status, 125);
+    assert!(output.contains(&format!("{}:2: boom", dir.text("main.lua"))), "{output}");
+    assert!(output.contains("stack traceback:") && !output.contains("[string"), "{output}");
+    let (status, output) = run(&mut script(&dir, "local x = = 1"));
+    assert_eq!(status, 125);
+    assert!(output.contains(&format!("{}:1:", dir.text("main.lua"))) && !output.contains("[string"), "{output}");
+}
+
 /// A script with none of the caller's CAIM_ variables.
 fn isolated(dir: &TempDir, source: &str) -> Command {
     let mut command = script(dir, source);

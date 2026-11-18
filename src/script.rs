@@ -539,7 +539,9 @@ pub fn dispatch(args: &[String]) -> Result<i32> {
     let full = absolute(path)?;
     let directory = full.rfind('/').map_or("/".to_string(), |slash| full[..slash.max(1)].to_string());
     install(&lua, &shared, &directory).map_err(lua_error)?;
-    let main = lua.load(source).set_name(path.as_str()).into_function().map_err(lua_error)?;
+    // A leading @ makes the name a file's: errors and tracebacks read path:line, which editors
+    // and debuggers map back to the file, instead of [string "path"]:line.
+    let main = lua.load(source).set_name(format!("@{path}")).into_function().map_err(lua_error)?;
     let ended = drive(&lua, &shared, main);
     // Last registered first, whatever ended the script.
     loop {
