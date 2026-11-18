@@ -225,6 +225,10 @@ return finished and code or 1
 | `caim.env(NAME, DEFAULT)` | The argument `NAME`, else the environment variable `NAME` upper-cased with `-` as `_`, else `DEFAULT` (nil without one); an empty value counts as none |
 | `caim.root` | The project's root: `CAIM_ROOT`, else the nearest directory at or above the current one with a `caim.toml`, else the current directory |
 | `caim.abs(PATH)` | The path made absolute against the current directory, with `.` and `..` resolved as text |
+| `caim.first{ pid, pid, ... }` | Waits for the first of several processes this script started to exit and returns its pid; `caim.exit(pid)` then gives its status |
+| `caim.stop(pid, { "TERM:20", "KILL:20" })` | Stops a process with `SIGNAL:SECONDS` steps, as `caim stop --pid` does; `true` when it is gone, `false` when it outlived the last step. The steps default to those shown |
+| `caim.run{ cmd, arg, ..., output = FILE, idle = S, steps = {...}, env = {K = V} }` | Runs a command to its end under a stall guard, as `caim run` does: returns `"exit", status`, `"stall", status` after stopping it, `"interrupted", signal`, or `"unavailable", status`. `output` receives its output and is what the guard watches. Every coroutine of the script waits while it runs |
+| `caim.defer(function)` | Runs the function when the script ends, last registered first, whatever ended it: the end of the chunk, a Lua error, `caim.usage`, or TERM, INT, HUP or QUIT, after which the script ends with 128 plus the signal. A deferred function cannot wait, but can use `caim.stop`; one that fails is reported and the rest still run |
 
 A script's integer return value is its exit status, 0 otherwise, and it ends when its chunk does: processes it started and coroutines still waiting are not stopped. A Lua error, or a script that cannot be read, ends it with 125 and the message on stderr; a missing `FILE` is 64. A script in which every coroutine waits on another fails with 125 rather than hang. `script` is not a task name.
 

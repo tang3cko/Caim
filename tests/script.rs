@@ -249,6 +249,153 @@ fn root_is_the_project_and_abs_resolves_against_the_current_directory() {
     assert_eq!(output, format!("{}\n", bare.0.display()));
 }
 
+/// Lua that starts a process ignoring TERM, which says ready and waits on NAME.fifo.
+fn blocked_child(dir: &TempDir, name: &str) -> String {
+    fifo(dir, &format!("{name}.fifo"));
+    format!(
+        "caim.spawn{{ 'sh', '-c', 'trap \"\" TERM; echo ready; read x < {0}/{1}.fifo', output = '{0}/{1}.log' }}",
+        dir.0.display(),
+        name
+    )
+}
+
+#[test]
+fn first_is_the_first_of_several_to_exit() {
+    let dir = TempDir::new();
+    let source = format!(
+        r#"
+        io.stdout:setvbuf("line")
+        local alpha, beta = {}, {}
+        print("started")
+        local first = caim.first{{ alpha, beta }}
+        print(first == beta, first == alpha)
+        print(caim.exit(beta))
+        caim.stop(alpha, {{ "KILL:30" }})
+        print(caim.exit(alpha))
+        "#,
+        blocked_child(&dir, "alpha"),
+        blocked_child(&dir, "beta")
+    );
+    let mut child = spawn(&mut script(&dir, &source));
+    assert_eq!(stdout_line(child.stdout.as_mut().unwrap()), "started\n");
+    release(&dir, "beta.fifo");
+    let (status, output) = finish(child);
+    assert_eq!(status, 0, "{output}");
+    assert!(output.ends_with("true\tfalse\n0\n137\n"), "{output}");
+}
+
+#[test]
+fn stop_escalates_through_its_steps() {
+    let dir = TempDir::new();
+    let source = format!(
+        r#"
+        local pid = {}
+        assert(caim.line(caim.args.dir .. "/alpha.log", "^ready$", pid))
+        print(caim.stop(pid, {{ "TERM:0", "KILL:30" }}))
+        print(caim.exit(pid))
+        print(pcall(caim.stop, pid, {{ "USR1:1" }}))
+        "#,
+        blocked_child(&dir, "alpha")
+    );
+    let (status, output) = run(&mut script(&dir, &source));
+    assert_eq!(status, 0, "{output}");
+    assert!(output.contains("true\n137\nfalse\t"), "{output}");
+}
+
+#[test]
+fn run_reports_how_a_command_ended() {
+    let dir = TempDir::new();
+    let source = r#"
+        local log = caim.args.dir .. "/run.log"
+        print(caim.run{ "sh", "-c", "echo hello; exit 3", output = log, idle = 60 })
+        print((io.open(log):read("a"):gsub("\n", "")))
+        print(pcall(caim.run, { "true", idle = 1 }))
+        print(pcall(caim.run, { "true", output = log }))
+    "#;
+    let (status, output) = run(&mut script(&dir, source));
+    assert_eq!(status, 0, "{output}");
+    let mut lines = output.lines();
+    assert_eq!(lines.next(), Some("exit\t3"));
+    assert_eq!(lines.next(), Some("hello"));
+    assert!(output.contains("run needs output") && output.contains("run needs idle"), "{output}");
+}
+
+#[test]
+fn run_stops_a_command_that_stops_making_progress() {
+    let dir = TempDir::new();
+    let source = r#"
+        local log = caim.args.dir .. "/run.log"
+        print(caim.run{ "sh", "-c", "echo started; exec tail -f /dev/null", output = log, idle = 1, steps = { "TERM:30", "KILL:30" } })
+    "#;
+    let (status, output) = run(&mut script(&dir, source));
+    assert_eq!(status, 0, "{output}");
+    assert!(output.ends_with("stall\t143\n"), "{output}");
+}
+
+#[test]
+fn deferred_functions_run_last_first_whatever_ends_the_script() {
+    let dir = TempDir::new();
+    let note =
+        |text: &str| format!("local f = io.open(caim.args.dir .. '/notes', 'a'); f:write('{text}\\n'); f:close()");
+    for (body, expected) in [
+        ("return 4", 4),
+        ("error('boom')", 125),
+        ("caim.usage('usage: x')", 64),
+        ("caim.join(caim.go(function() caim.join(0) end))", 125),
+    ] {
+        let _ = fs::remove_file(dir.path("notes"));
+        let source = format!(
+            "caim.defer(function() {} end)\ncaim.defer(function() {} end)\n{body}",
+            note("first"),
+            note("second")
+        );
+        let (status, output) = run(&mut script(&dir, &source));
+        assert_eq!(status, expected, "{body}: {output}");
+        assert_eq!(fs::read_to_string(dir.path("notes")).unwrap(), "second\nfirst\n", "{body}");
+    }
+}
+
+#[test]
+fn a_deferred_function_cannot_wait_and_a_failing_one_does_not_stop_the_rest() {
+    let dir = TempDir::new();
+    let source = r#"
+        caim.defer(function() print("still ran") end)
+        caim.defer(function() caim.exit(1) end)
+    "#;
+    let (status, output) = run(&mut script(&dir, source));
+    assert_eq!(status, 0, "{output}");
+    assert!(output.contains("deferred function failed") && output.contains("cannot wait"), "{output}");
+    assert!(output.contains("still ran"), "{output}");
+}
+
+#[test]
+fn a_termination_signal_after_a_run_still_runs_the_deferred_functions() {
+    let dir = TempDir::new();
+    let source = format!(
+        r#"
+        io.stdout:setvbuf("line")
+        local pid = {}
+        caim.defer(function()
+            caim.stop(pid, {{ "TERM:0", "KILL:30" }})
+            local f = io.open(caim.args.dir .. "/cleaned", "w"); f:write("yes"); f:close()
+        end)
+        caim.run{{ "true", output = caim.args.dir .. "/run.log", idle = 60 }}
+        assert(caim.line(caim.args.dir .. "/alpha.log", "^ready$", pid))
+        print("ready")
+        caim.exit(pid)
+        print("not reached")
+        "#,
+        blocked_child(&dir, "alpha")
+    );
+    let mut child = spawn(&mut script(&dir, &source));
+    assert_eq!(stdout_line(child.stdout.as_mut().unwrap()), "ready\n");
+    assert_eq!(unsafe { libc::kill(child.id() as i32, libc::SIGTERM) }, 0);
+    let (status, output) = finish(child);
+    assert_eq!(status, 128 + libc::SIGTERM, "{output}");
+    assert!(!output.contains("not reached"), "{output}");
+    assert_eq!(fs::read_to_string(dir.path("cleaned")).unwrap(), "yes");
+}
+
 #[test]
 fn script_is_not_a_task_name() {
     let dir = TempDir::new();
