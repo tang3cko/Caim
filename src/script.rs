@@ -641,6 +641,9 @@ pub fn dispatch(args: &[String]) -> Result<i32> {
         _ => {}
     }
     let [_, path] = args else { return Err(Error::Usage("expected FILE, --check FILE... or --types".into())) };
+    if std::env::var_os("CAIM_TASK").is_none() {
+        warn_of_requires(path);
+    }
     let lua = Lua::new();
     let main = compile(&lua, path)?;
     let trace = std::env::var_os("CAIM_SCRIPT_TRACE").is_some_and(|value| !value.is_empty());
@@ -657,6 +660,26 @@ pub fn dispatch(args: &[String]) -> Result<i32> {
         }
     }
     ended
+}
+
+fn warn_of_requires(path: &str) {
+    let (Ok(script), Ok(tasks)) = (std::fs::canonicalize(path), crate::tasks::load()) else { return };
+    for task in tasks.values() {
+        if task.declaration.script.is_none() || task.declaration.requires.is_empty() {
+            continue;
+        }
+        if task.command.get(2).and_then(|own| std::fs::canonicalize(own).ok()).as_ref() != Some(&script) {
+            continue;
+        }
+        let required: Vec<&str> =
+            task.declaration.requires.iter().map(|requirement| requirement.task.as_str()).collect();
+        eprintln!(
+            "caim script: {path} is the script of {}, which requires {}; those did not run, as `caim {}` would run them",
+            task.name,
+            required.join(", "),
+            task.name
+        );
+    }
 }
 
 fn integer(value: Option<Value>) -> Option<i32> {
