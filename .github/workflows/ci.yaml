@@ -80,8 +80,16 @@ jobs:
       - name: Terminal job control tests
         run: bash tests/terminal/job_control_test.sh
 
-  vet:
-    name: Vet
+  deny:
+    name: Deny (${{ matrix.checks }})
+    strategy:
+      fail-fast: false
+      matrix:
+        checks:
+          - advisories
+          - bans licenses sources
+    # An advisory published today must not fail an unrelated change; bans, licenses and sources gate it.
+    continue-on-error: ${{ matrix.checks == 'advisories' }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -95,13 +103,15 @@ jobs:
       - name: Set up mise
         uses: jdx/mise-action@d5574b52816a478f9d4e6529a3f6ff17a8a36785 # v5.2.8
 
-      - name: cargo vet
-        run: cargo vet --locked
+      - name: cargo deny
+        env:
+          CHECKS: ${{ matrix.checks }}
+        run: cargo deny --locked check $CHECKS
 
   ci-result:
     name: CI Result
     if: always()
-    needs: [lint, test, vet]
+    needs: [lint, test, deny]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions: {}
