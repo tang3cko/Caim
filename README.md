@@ -78,6 +78,7 @@ caim list
 caim <task> --help
 caim [--dry-run] <task> [--name value ...] [<task> [--name value ...] ...]
 caim script FILE
+caim script --check FILE...
 caim completions bash|zsh
 ```
 
@@ -238,6 +239,8 @@ return finished and code or 1
 `require` finds a module next to the script (`util.lua` or `util/init.lua`) and in the project's `lua/` directory, and nowhere else: not the current directory, and no compiled modules.
 
 A script's integer return value is its exit status, 0 otherwise, and it ends when its chunk does: processes it started and coroutines still waiting are not stopped. A Lua error, or a script that cannot be read, ends it with 125 and the message on stderr; a missing `FILE` is 64. A script in which every coroutine waits on another fails with 125 rather than hang. `script` is not a task name.
+
+An error names the file and line, `tasks/build.lua:12: message`, with a stack traceback. `caim script --check FILE...` compiles each script without running it, reports every one that does not compile, and exits 125 if any does not, 0 otherwise; it checks syntax only, not names or the `caim` functions' arguments.
 
 ### Verdicts
 
