@@ -400,6 +400,9 @@ fn install(lua: &Lua, shared: &Rc<RefCell<Shared>>, directory: &str) -> mlua::Re
                 (None, Err(_)) => crate::progress::STALL_SECONDS,
             };
             let output = absolute(&output).map_err(|error| mlua::Error::runtime(format!("run: {error}")))?;
+            // The output starts empty, as spawn's does: a line left by an earlier run would
+            // otherwise be read as this one's.
+            File::create(&output).map_err(|error| mlua::Error::runtime(format!("run: {output}: {error}")))?;
             let mut environment = Vec::new();
             if let Some(env) = spec.get::<Option<Table>>("env")? {
                 for pair in env.pairs::<String, String>() {
