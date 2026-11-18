@@ -544,15 +544,39 @@ fn chunk_name(path: &str) -> String {
     format!("@{}", under.unwrap_or_else(|| path.to_string()))
 }
 
-pub fn dispatch(args: &[String]) -> Result<i32> {
-    let [_, path] = args else { return Err(Error::Usage("expected FILE".into())) };
+/// Reads and compiles a script without running it.
+fn compile(lua: &Lua, path: &str) -> Result<Function> {
     let source = std::fs::read_to_string(path).map_err(|error| Error::io(format!("read {path}"), error))?;
+    lua.load(source).set_name(chunk_name(path)).into_function().map_err(lua_error)
+}
+
+/// Compiles every script given and reports each that does not compile, running none of them.
+fn check(paths: &[String]) -> Result<i32> {
+    if paths.is_empty() {
+        return Err(Error::Usage("--check expected FILE...".into()));
+    }
     let lua = Lua::new();
+    let mut status = 0;
+    for path in paths {
+        if let Err(error) = compile(&lua, path) {
+            eprintln!("caim script: {error}");
+            status = FAILED;
+        }
+    }
+    Ok(status)
+}
+
+pub fn dispatch(args: &[String]) -> Result<i32> {
+    if args.get(1).is_some_and(|flag| flag == "--check") {
+        return check(&args[2..]);
+    }
+    let [_, path] = args else { return Err(Error::Usage("expected FILE or --check FILE...".into())) };
+    let lua = Lua::new();
+    let main = compile(&lua, path)?;
     let shared = Rc::new(RefCell::new(Shared::default()));
     let full = absolute(path)?;
     let directory = full.rfind('/').map_or("/".to_string(), |slash| full[..slash.max(1)].to_string());
     install(&lua, &shared, &directory).map_err(lua_error)?;
-    let main = lua.load(source).set_name(chunk_name(path)).into_function().map_err(lua_error)?;
     let ended = drive(&lua, &shared, main);
     // Last registered first, whatever ended the script.
     loop {

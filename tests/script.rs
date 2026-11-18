@@ -197,6 +197,22 @@ fn an_error_names_the_file_and_line() {
     assert!(output.contains(": main.lua:1:") && !output.contains("[string"), "{output}");
 }
 
+#[test]
+fn check_compiles_without_running() {
+    let dir = TempDir::new();
+    fs::write(dir.path("good.lua"), "error('ran')").unwrap();
+    fs::write(dir.path("bad.lua"), "local x = = 1").unwrap();
+    let check = |files: &[&str]| {
+        run(caim().args(["script", "--check"]).args(files.iter().map(|f| dir.text(f))).current_dir(&dir.0))
+    };
+    assert_eq!(check(&["good.lua"]), (0, String::new()));
+    let (status, output) = check(&["good.lua", "bad.lua", "absent.lua"]);
+    assert_eq!(status, 125);
+    assert!(output.contains(": bad.lua:1:"), "{output}");
+    assert!(output.contains(&dir.text("absent.lua")) && !output.contains(":1: ran"), "{output}");
+    assert_eq!(run(caim().args(["script", "--check"])).0, 64);
+}
+
 /// A script with none of the caller's CAIM_ variables.
 fn isolated(dir: &TempDir, source: &str) -> Command {
     let mut command = script(dir, source);
