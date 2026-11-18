@@ -608,11 +608,19 @@ fn check(paths: &[String]) -> Result<i32> {
     Ok(status)
 }
 
+/// Type definitions of the caim table for the Lua language server, as this caim installs it.
+const TYPES: &str = include_str!("caim.d.lua");
+
 pub fn dispatch(args: &[String]) -> Result<i32> {
-    if args.get(1).is_some_and(|flag| flag == "--check") {
-        return check(&args[2..]);
+    match args.get(1).map(String::as_str) {
+        Some("--check") => return check(&args[2..]),
+        Some("--types") if args.len() == 2 => {
+            print!("{TYPES}");
+            return Ok(0);
+        }
+        _ => {}
     }
-    let [_, path] = args else { return Err(Error::Usage("expected FILE or --check FILE...".into())) };
+    let [_, path] = args else { return Err(Error::Usage("expected FILE, --check FILE... or --types".into())) };
     let lua = Lua::new();
     let main = compile(&lua, path)?;
     let trace = std::env::var_os("CAIM_SCRIPT_TRACE").is_some_and(|value| !value.is_empty());
