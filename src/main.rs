@@ -1,5 +1,5 @@
 use caim::error::{Error, FAILED, USAGE};
-use caim::{completions, digests, init, tasks, waits};
+use caim::{completions, digests, init, script, tasks, waits};
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -24,6 +24,18 @@ fn main() {
             }
             Err(error) => {
                 eprintln!("caim {}: the watch failed: {error}", args[0]);
+                FAILED
+            }
+        }
+    } else if args.first().is_some_and(|mode| mode == script::MODE) {
+        match script::dispatch(&args) {
+            Ok(status) => status,
+            Err(Error::Usage(message)) => {
+                eprintln!("caim script: {message}");
+                USAGE
+            }
+            Err(error) => {
+                eprintln!("caim script: {error}");
                 FAILED
             }
         }
