@@ -1,3 +1,3 @@
 [tools]
-"github:EmbarkStudios/cargo-deny" = "0.20.2"
+"github:EmbarkStudios/cargo-deny" = "0.21.0"
 rust = { version = "1.100.0", profile = "minimal", components = "rustfmt,clippy" }
