@@ -1,6 +1,6 @@
 [package]
 name = "caim"
-version = "1.1.1"
+version = "1.2.0"
 edition = "2024"
 rust-version = "1.100.0"
 description = "A task runner and process supervisor that judges a stalled run by the progress it declared"
