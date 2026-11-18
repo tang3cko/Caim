@@ -183,6 +183,21 @@ fn failures_are_reported_not_hidden() {
 }
 
 #[test]
+fn a_deferred_function_cleans_up_with_run() {
+    let dir = TempDir::new();
+    fs::create_dir(dir.path("scratch")).unwrap();
+    let source = r#"
+        local scratch, log = caim.args.dir .. "/scratch", caim.args.dir .. "/rm.log"
+        caim.defer(function() print(caim.run{ "rm", "-rf", scratch, output = log, idle = 10 }) end)
+        error("boom")
+    "#;
+    let (status, output) = run(&mut script(&dir, source));
+    assert_eq!(status, 125);
+    assert!(output.contains("exit\t0"), "{output}");
+    assert!(!dir.path("scratch").exists());
+}
+
+#[test]
 fn an_error_names_the_file_and_line() {
     let dir = TempDir::new();
     // Run from the script's directory: Lua cuts a long name down to its end, and a temporary

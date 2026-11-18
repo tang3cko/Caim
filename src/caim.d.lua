@@ -141,7 +141,8 @@ function caim.stop(pid, steps) end
 ---@return integer? status The exit status, or the signal when interrupted
 function caim.run(spec) end
 
----Runs the function when the script ends, last registered first, whatever ended it. It cannot wait.
+---Runs the function when the script ends, last registered first, whatever ended it. It cannot wait,
+---but caim.run and caim.stop, which block rather than wait, work in it.
 ---@param fn fun()
 function caim.defer(fn) end
 
