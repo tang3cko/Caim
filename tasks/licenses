@@ -28,6 +28,10 @@ while IFS='|' read -r package license; do
     files="$(find "$directory" -maxdepth 1 -type f \( -iname 'LICENSE*' -o -iname 'LICENCE*' \
       -o -iname 'COPYING*' -o -iname 'UNLICENSE*' -o -iname 'NOTICE*' \) | LC_ALL=C sort)"
   fi
+  # A crate published without its license file has the text kept under licenses/<crate>/.
+  if [[ -z "$files" && -d "$ROOT/licenses/$name" ]]; then
+    files="$(find "$ROOT/licenses/$name" -maxdepth 1 -type f | LC_ALL=C sort)"
+  fi
   if [[ -z "$files" ]]; then
     echo "tasks/licenses: $name $version ships no license file" >&2
     failed=1
@@ -39,4 +43,10 @@ while IFS='|' read -r package license; do
     cat "$file"
   done <<< "$files"
 done <<< "$crates"
+
+# Lua's C sources are compiled into the binary by a build script, so cargo tree does not list them.
+if grep -q '^name = "mlua-sys"$' "$ROOT/Cargo.lock"; then
+  printf '\n%s\nLua 5.5: MIT\n%s\n\n' "$(printf '=%.0s' {1..80})" "$(printf '=%.0s' {1..80})"
+  cat "$ROOT/licenses/lua/LICENSE"
+fi
 exit "$failed"
