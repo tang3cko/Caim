@@ -183,6 +183,21 @@ fn failures_are_reported_not_hidden() {
 }
 
 #[test]
+fn run_takes_its_idle_from_the_task() {
+    let dir = TempDir::new();
+    let source = r#"print(caim.run{ "true", output = caim.args.dir .. "/run.log" })"#;
+    assert_eq!(run(script(&dir, source).env_remove("CAIM_STALL_SECONDS")), (0, "exit\t0\n".into()));
+    assert_eq!(run(script(&dir, source).env("CAIM_STALL_SECONDS", "30")), (0, "exit\t0\n".into()));
+    let (status, output) = run(script(&dir, source).env("CAIM_STALL_SECONDS", "soon"));
+    assert_eq!(status, 125);
+    assert!(output.contains("CAIM_STALL_SECONDS"), "{output}");
+    let given = r#"caim.run{ "true", output = caim.args.dir .. "/run.log", idle = 0 }"#;
+    let (status, output) = run(&mut script(&dir, given));
+    assert_eq!(status, 125);
+    assert!(output.contains("idle"), "{output}");
+}
+
+#[test]
 fn a_deferred_function_cleans_up_with_run() {
     let dir = TempDir::new();
     fs::create_dir(dir.path("scratch")).unwrap();
@@ -411,7 +426,7 @@ fn run_reports_how_a_command_ended() {
     let mut lines = output.lines();
     assert_eq!(lines.next(), Some("exit\t3"));
     assert_eq!(lines.next(), Some("hello"));
-    assert!(output.contains("run needs output") && output.contains("run needs idle"), "{output}");
+    assert!(output.contains("run needs output") && output.contains("true\texit\t0"), "{output}");
 }
 
 #[test]

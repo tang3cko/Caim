@@ -387,10 +387,18 @@ fn install(lua: &Lua, shared: &Rc<RefCell<Shared>>, directory: &str) -> mlua::Re
             let output = spec
                 .get::<Option<String>>("output")?
                 .ok_or_else(|| mlua::Error::runtime("run needs output, the file for the command's output"))?;
-            let idle = spec
-                .get::<Option<f64>>("idle")?
-                .filter(|idle| idle.is_finite() && *idle > 0.0)
-                .ok_or_else(|| mlua::Error::runtime("run needs idle, a positive number of seconds"))?;
+            let positive = |seconds: &f64| seconds.is_finite() && *seconds > 0.0;
+            // Without one of its own, a run takes the idle time of the task running the script,
+            // which caim passes as CAIM_STALL_SECONDS, as a task's command does.
+            let idle = match (spec.get::<Option<f64>>("idle")?, std::env::var("CAIM_STALL_SECONDS")) {
+                (Some(idle), _) => Some(idle)
+                    .filter(positive)
+                    .ok_or_else(|| mlua::Error::runtime("run takes idle, a positive number of seconds"))?,
+                (None, Ok(text)) => text.parse::<f64>().ok().filter(positive).ok_or_else(|| {
+                    mlua::Error::runtime(format!("run: CAIM_STALL_SECONDS={text:?} is not a positive number"))
+                })?,
+                (None, Err(_)) => crate::progress::STALL_SECONDS,
+            };
             let output = absolute(&output).map_err(|error| mlua::Error::runtime(format!("run: {error}")))?;
             let mut environment = Vec::new();
             if let Some(env) = spec.get::<Option<Table>>("env")? {
