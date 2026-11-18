@@ -239,6 +239,28 @@ fn a_trace_shows_each_wait_and_where_it_was_made() {
     assert_eq!(lines, expected, "{output}");
 }
 
+#[test]
+fn the_types_describe_the_caim_table_as_it_is() {
+    let dir = TempDir::new();
+    let (status, types) = run(caim().args(["script", "--types"]));
+    assert_eq!(status, 0);
+    assert!(types.starts_with("---@meta"), "{types}");
+    fs::write(dir.path("caim.d.lua"), &types).unwrap();
+    assert_eq!(run(caim().args(["script", "--check", &dir.text("caim.d.lua")])), (0, String::new()));
+    let source = "local names = {}\nfor name in pairs(caim) do names[#names + 1] = name end\ntable.sort(names)\nprint(table.concat(names, ' '))";
+    let (status, names) = run(&mut script(&dir, source));
+    assert_eq!(status, 0);
+    let mut described: Vec<&str> = types
+        .lines()
+        .filter_map(|line| match line.strip_prefix("function caim.") {
+            Some(rest) => rest.split('(').next(),
+            None => line.strip_prefix("caim.").and_then(|rest| rest.split(" = ").next()),
+        })
+        .collect();
+    described.sort();
+    assert_eq!(described, names.split_whitespace().collect::<Vec<_>>());
+}
+
 /// A script with none of the caller's CAIM_ variables.
 fn isolated(dir: &TempDir, source: &str) -> Command {
     let mut command = script(dir, source);

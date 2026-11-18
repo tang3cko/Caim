@@ -79,6 +79,7 @@ caim <task> --help
 caim [--dry-run] <task> [--name value ...] [<task> [--name value ...] ...]
 caim script FILE
 caim script --check FILE...
+caim script --types
 caim completions bash|zsh
 ```
 
@@ -249,6 +250,19 @@ caim trace: 0 starts
 caim trace: 0 waits line /work/run.log ^READY 4242 at tasks/boot.lua:8
 caim trace: 0 wakes with true
 caim trace: 0 ends
+```
+
+`caim script --types` prints type definitions of the `caim` table for the [Lua language server](https://luals.github.io), so an editor completes the functions and checks their arguments. They describe the caim that printed them; write them again after upgrading. Put the file in a directory the server reads as a library, with a `.luarc.json` at the project's root:
+
+```sh
+mkdir -p .luals && caim script --types > .luals/caim.d.lua
+```
+
+```json
+{
+  "runtime.version": "Lua 5.5",
+  "workspace.library": [".luals"]
+}
 ```
 
 ### Verdicts
