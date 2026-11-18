@@ -229,8 +229,26 @@ return finished and code or 1
 | `caim.stop(pid, { "TERM:20", "KILL:20" })` | Stops a process with `SIGNAL:SECONDS` steps, as `caim stop --pid` does; `true` when it is gone, `false` when it outlived the last step. The steps default to those shown |
 | `caim.run{ cmd, arg, ..., output = FILE, idle = S, steps = {...}, env = {K = V} }` | Runs a command to its end under a stall guard, as `caim run` does: returns `"exit", status`, `"stall", status` after stopping it, `"interrupted", signal`, or `"unavailable", status`. `output` receives its output and is what the guard watches. Every coroutine of the script waits while it runs |
 | `caim.defer(function)` | Runs the function when the script ends, last registered first, whatever ended it: the end of the chunk, a Lua error, `caim.usage`, or TERM, INT, HUP or QUIT, after which the script ends with 128 plus the signal. A deferred function cannot wait, but can use `caim.stop`; one that fails is reported and the rest still run |
+| `caim.lines(FILE, REGEX)` | Iterates over the lines of the file that match the regular expression, giving the line and then each capture group; a file that does not exist has none |
+| `caim.verdict()` | A collector of case verdicts, below |
 
 A script's integer return value is its exit status, 0 otherwise, and it ends when its chunk does: processes it started and coroutines still waiting are not stopped. A Lua error, or a script that cannot be read, ends it with 125 and the message on stderr; a missing `FILE` is 64. A script in which every coroutine waits on another fails with 125 rather than hang. `script` is not a task name.
+
+### Verdicts
+
+A script that judges a run case by case, each PASS, FAIL or VOID (could not be judged), collects them with `caim.verdict()`:
+
+```lua
+local v = caim.verdict():expect{ "alpha", "beta", "gamma" }   -- a case never recorded is VOID
+for _, verdict, name in caim.lines("run.log", "^VERDICT (\\w+) case=(\\S+)") do
+  v:record(verdict, name)                                      -- a verdict other than the three is VOID
+end
+return v:finish()
+```
+
+`v:pass(name)`, `v:fail(name)`, `v:void(name)` and `v:record(verdict, name)` add a case; recording a case again keeps the worse verdict. `v:finish()` prints `VERDICT <verdict> case=<name>` for each case, the expected ones first, then `VERDICT <verdict> cases=N pass=P fail=F void=V`, and returns the worst verdict as 0 for PASS, 1 for FAIL and 2 for VOID; a verdict with no cases is VOID, since nothing was judged. These are the task's own statuses, as any command's are, and distinct from the ones caim keeps for itself, such as 124 for a run that stalled.
+
+### Script tasks
 
 A task can be a script: `script = "tasks/build.lua"` in place of `run`. The task's command is then caim running the script, from the project's root unless `dir` says otherwise, so the stall guard and the progress the script declares, the process group, stop steps, signals, `env`, hooks and the exit status work as they do for `run`. `caim <task> --help` names the script and `--dry-run` prints `script:` where it would print `run:`. A script that does not exist ends the task with 127 before anything starts.
 

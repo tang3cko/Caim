@@ -29,6 +29,53 @@ function caim.first(pids) return wait("first", pids) end
 function caim.line(path, pattern, pid) return wait("line", path, pattern, pid) end
 function caim.join(id) return wait("join", id) end
 function caim.usage(message) return wait("usage", message) end
+
+local rank = { PASS = 0, FAIL = 1, VOID = 2 }
+local names = { [0] = "PASS", "FAIL", "VOID" }
+local Verdict = {}
+Verdict.__index = Verdict
+
+function caim.verdict()
+  return setmetatable({ cases = {}, order = {}, expected = {} }, Verdict)
+end
+
+function Verdict:record(verdict, name)
+  if type(name) ~= "string" then error("a case is named by a string", 2) end
+  verdict = rank[verdict] and verdict or "VOID"
+  local seen = self.cases[name]
+  if seen == nil then self.order[#self.order + 1] = name end
+  if seen == nil or rank[verdict] > rank[seen] then self.cases[name] = verdict end
+  return self
+end
+
+function Verdict:pass(name) return self:record("PASS", name) end
+function Verdict:fail(name) return self:record("FAIL", name) end
+function Verdict:void(name) return self:record("VOID", name) end
+
+function Verdict:expect(list)
+  for _, name in ipairs(list) do self.expected[#self.expected + 1] = name end
+  return self
+end
+
+function Verdict:finish()
+  local listed, shown = {}, {}
+  for _, name in ipairs(self.expected) do
+    if not shown[name] then shown[name] = true; listed[#listed + 1] = name end
+    if self.cases[name] == nil then self:record("VOID", name) end
+  end
+  for _, name in ipairs(self.order) do
+    if not shown[name] then shown[name] = true; listed[#listed + 1] = name end
+  end
+  local worst, count = #listed == 0 and rank.VOID or rank.PASS, { PASS = 0, FAIL = 0, VOID = 0 }
+  for _, name in ipairs(listed) do
+    local verdict = self.cases[name]
+    print(("VERDICT %s case=%s"):format(verdict, name))
+    count[verdict] = count[verdict] + 1
+    worst = math.max(worst, rank[verdict])
+  end
+  print(("VERDICT %s cases=%d pass=%d fail=%d void=%d"):format(names[worst], #listed, count.PASS, count.FAIL, count.VOID))
+  return worst
+end
 "#;
 
 const STOP_STEPS: [StopStep; 2] =
@@ -340,6 +387,28 @@ fn install(lua: &Lua, shared: &Rc<RefCell<Shared>>) -> mlua::Result<()> {
                 }
                 Ended::Unavailable(_, status) => ("unavailable", reaped(status)),
             })
+        })?,
+    )?;
+
+    caim.set(
+        "lines",
+        lua.create_function(|lua, (path, pattern): (String, String)| {
+            let pattern = regex::Regex::new(&pattern)
+                .map_err(|error| mlua::Error::runtime(format!("invalid regular expression: {error}")))?;
+            let text = match std::fs::read(&path) {
+                Ok(bytes) => String::from_utf8_lossy(&bytes).into_owned(),
+                Err(error) if missing(&error) => String::new(),
+                Err(error) => return Err(mlua::Error::runtime(format!("{path}: {error}"))),
+            };
+            let mut rows: VecDeque<Vec<String>> = VecDeque::new();
+            for line in text.lines() {
+                if let Some(found) = pattern.captures(line) {
+                    let mut row = vec![line.to_string()];
+                    row.extend(found.iter().skip(1).map(|group| group.map_or_else(String::new, |m| m.as_str().into())));
+                    rows.push_back(row);
+                }
+            }
+            lua.create_function_mut(move |_, ()| Ok(mlua::Variadic::from_iter(rows.pop_front().unwrap_or_default())))
         })?,
     )?;
 

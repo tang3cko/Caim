@@ -397,6 +397,63 @@ fn a_termination_signal_after_a_run_still_runs_the_deferred_functions() {
 }
 
 #[test]
+fn lines_iterates_the_matching_lines_with_their_captures() {
+    let dir = TempDir::new();
+    fs::write(dir.path("run.log"), "noise\nCASE ok alpha\nCASE bad beta\nmore noise\nCASE ok gamma\n").unwrap();
+    let source = r#"
+        local log = caim.args.dir .. "/run.log"
+        for line, verdict, name in caim.lines(log, "^CASE (\\w+) (\\w+)$") do print(line, verdict, name) end
+        local count = 0
+        for _ in caim.lines(log, "^CASE") do count = count + 1 end
+        print(count)
+        for _ in caim.lines(caim.args.dir .. "/absent.log", ".") do print("never") end
+        print((pcall(caim.lines, log, "(")))
+    "#;
+    let (status, output) = run(&mut script(&dir, source));
+    let expected = "CASE ok alpha\tok\talpha\nCASE bad beta\tbad\tbeta\nCASE ok gamma\tok\tgamma\n3\nfalse\n";
+    assert_eq!((status, output.as_str()), (0, expected));
+}
+
+#[test]
+fn a_verdict_is_the_worst_of_its_cases_with_the_missing_ones_void() {
+    let dir = TempDir::new();
+    for (body, expected, last) in [
+        ("v:pass('a'); v:pass('b')", 0, "VERDICT PASS cases=2 pass=2 fail=0 void=0"),
+        ("v:pass('a'); v:fail('b')", 1, "VERDICT FAIL cases=2 pass=1 fail=1 void=0"),
+        ("v:fail('a'); v:void('b'); v:pass('c')", 2, "VERDICT VOID cases=3 pass=1 fail=1 void=1"),
+        ("v:pass('a'); v:expect{ 'a', 'missing' }", 2, "VERDICT VOID cases=2 pass=1 fail=0 void=1"),
+        ("v:fail('a'); v:pass('a')", 1, "VERDICT FAIL cases=1 pass=0 fail=1 void=0"),
+        ("v:pass('a'); v:record('MAYBE', 'b')", 2, "VERDICT VOID cases=2 pass=1 fail=0 void=1"),
+        ("", 2, "VERDICT VOID cases=0 pass=0 fail=0 void=0"),
+    ] {
+        let source = format!("local v = caim.verdict()\n{body}\nreturn v:finish()");
+        let (status, output) = run(&mut script(&dir, &source));
+        assert_eq!(status, expected, "{body}: {output}");
+        assert_eq!(output.lines().last(), Some(last), "{body}: {output}");
+    }
+    let source =
+        "local v = caim.verdict()\nv:pass('beta'); v:fail('alpha'); v:expect{ 'gamma', 'alpha' }\nreturn v:finish()";
+    let expected = "VERDICT VOID case=gamma\nVERDICT FAIL case=alpha\nVERDICT PASS case=beta\nVERDICT VOID cases=3 pass=1 fail=1 void=1\n";
+    assert_eq!(run(&mut script(&dir, source)), (2, expected.into()));
+}
+
+#[test]
+fn a_verdict_built_from_a_log() {
+    let dir = TempDir::new();
+    fs::write(dir.path("run.log"), "VERDICT PASS case=alpha\nVERDICT FAIL case=beta\nnoise\n").unwrap();
+    let source = r#"
+        local v = caim.verdict():expect{ "alpha", "beta", "gamma" }
+        for _, verdict, name in caim.lines(caim.args.dir .. "/run.log", "^VERDICT (\\w+) case=(\\S+)") do
+            v:record(verdict, name)
+        end
+        return v:finish()
+    "#;
+    let (status, output) = run(&mut script(&dir, source));
+    assert_eq!(status, 2, "{output}");
+    assert!(output.contains("VERDICT VOID case=gamma") && output.contains("VERDICT FAIL case=beta"), "{output}");
+}
+
+#[test]
 fn script_is_not_a_task_name() {
     let dir = TempDir::new();
     fs::write(dir.path("caim.toml"), "name = \"case\"\n[tasks.script]\nrun = \"true\"\n").unwrap();
