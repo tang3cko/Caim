@@ -686,6 +686,34 @@ default = "0"
 }
 
 #[test]
+fn a_task_script_run_by_hand_says_its_requires_did_not_run() {
+    let project = TempDir::new();
+    let tasks = "name = \"case\"\n[tasks.build]\nrun = \"true\"\n[tasks.deploy]\nscript = \"deploy.lua\"\nrequires = [\"build\"]\n";
+    fs::write(project.path("caim.toml"), tasks).unwrap();
+    fs::write(project.path("deploy.lua"), "print('deployed')").unwrap();
+    fs::write(project.path("other.lua"), "print('other')").unwrap();
+    let by_hand = |file: &str, task: Option<&str>| {
+        let mut command = caim();
+        for (key, _) in std::env::vars() {
+            if key.starts_with("CAIM_") {
+                command.env_remove(key);
+            }
+        }
+        command.args(["script", file]).current_dir(&project.0);
+        if let Some(task) = task {
+            command.env("CAIM_TASK", task);
+        }
+        run(&mut command)
+    };
+    let (status, output) = by_hand("deploy.lua", None);
+    assert_eq!(status, 0, "{output}");
+    assert!(output.contains("caim script: deploy.lua is the script of deploy, which requires build"), "{output}");
+    assert!(output.contains("caim deploy"), "{output}");
+    assert_eq!(by_hand("deploy.lua", Some("deploy")), (0, "deployed\n".into()));
+    assert_eq!(by_hand("other.lua", None), (0, "other\n".into()));
+}
+
+#[test]
 fn script_is_not_a_task_name() {
     let dir = TempDir::new();
     fs::write(dir.path("caim.toml"), "name = \"case\"\n[tasks.script]\nrun = \"true\"\n").unwrap();

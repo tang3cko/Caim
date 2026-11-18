@@ -281,7 +281,7 @@ return v:finish()
 
 ### Script tasks
 
-A task can be a script: `script = "tasks/build.lua"` in place of `run`. The task's command is then caim running the script, from the project's root unless `dir` says otherwise, so the stall guard and the progress the script declares, the process group, stop steps, signals, `env`, hooks and the exit status work as they do for `run`. `caim <task> --help` names the script and `--dry-run` prints `script:` where it would print `run:`. A script that does not exist ends the task with 127 before anything starts.
+A task can be a script: `script = "tasks/build.lua"` in place of `run`. The task's command is then caim running the script, from the project's root unless `dir` says otherwise, so the stall guard and the progress the script declares, the process group, stop steps, signals, `env`, hooks and the exit status work as they do for `run`. `caim <task> --help` names the script and `--dry-run` prints `script:` where it would print `run:`. A script that does not exist ends the task with 127 before anything starts. Run by hand as `caim script FILE`, outside a task, a script runs alone; when it is the script of a task with `requires`, a line on stderr names the task and the requires that did not run.
 
 ## Compatibility
 
