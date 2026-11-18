@@ -18,7 +18,7 @@ path = "src/main.rs"
 [dependencies]
 libc = "=0.2.191"
 mlua = { version = "=0.12.2", default-features = false, features = ["lua55", "vendored"] }
-regex = "=1.13.1"
+regex = "=1.13.2"
 serde = { version = "=1.0.229", features = ["derive"] }
 toml = { version = "=1.2.1", default-features = false, features = ["std", "parse", "serde"] }
 
