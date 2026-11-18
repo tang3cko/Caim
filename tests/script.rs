@@ -8,6 +8,11 @@ use std::process::Command;
 fn script(dir: &TempDir, source: &str) -> Command {
     fs::write(dir.path("main.lua"), source).unwrap();
     let mut command = caim();
+    for (key, _) in std::env::vars() {
+        if key.starts_with("CAIM_") {
+            command.env_remove(key);
+        }
+    }
     command.args(["script", &dir.text("main.lua")]).env("CAIM_ARG_DIR", &dir.0);
     command
 }
@@ -300,14 +305,8 @@ fn the_types_describe_the_caim_table_as_it_is() {
     assert_eq!(described, names.split_whitespace().collect::<Vec<_>>());
 }
 
-/// A script with none of the caller's CAIM_ variables.
 fn isolated(dir: &TempDir, source: &str) -> Command {
     let mut command = script(dir, source);
-    for (key, _) in std::env::vars() {
-        if key.starts_with("CAIM_") {
-            command.env_remove(key);
-        }
-    }
     command.env_remove("CAIM_ARG_DIR");
     command
 }
